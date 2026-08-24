@@ -5,11 +5,18 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
+import { sendTemplatedEmail } from "../email/email.service.js";
+import { formatPrice } from "../../lib/format.js";
+import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export const adminOrdersRouter = Router();
 adminOrdersRouter.use(authenticate, requireAdmin);
+
+function isCustomOrder(o: any): boolean {
+  return (o.order_items ?? []).some((i: any) => Array.isArray(i.customizations) && i.customizations.length > 0);
+}
 
 function toAdminOrderSummary(o: any) {
   return {
@@ -22,6 +29,8 @@ function toAdminOrderSummary(o: any) {
     paymentMethod: o.payment_method,
     total: Number(o.total),
     itemCount: (o.order_items ?? []).reduce((s: number, i: any) => s + i.quantity, 0),
+    isCustomOrder: isCustomOrder(o),
+    trackingNumber: o.tracking_number ?? null,
     placedAt: o.placed_at,
     createdAt: o.created_at,
   };
@@ -29,7 +38,7 @@ function toAdminOrderSummary(o: any) {
 
 adminOrdersRouter.get("/", async (req, res, next) => {
   try {
-    const { status, paymentStatus, page = "1", limit = "50" } = req.query as Record<string, string>;
+    const { status, paymentStatus, custom, page = "1", limit = "50" } = req.query as Record<string, string>;
     let query = supabaseAdmin
       .from("orders")
       .select("*, order_items(*)", { count: "exact" })
@@ -44,7 +53,19 @@ adminOrdersRouter.get("/", async (req, res, next) => {
     const { data, error, count } = await query;
     if (error) throw HttpError.internal(error.message);
 
-    res.json({ items: (data ?? []).map(toAdminOrderSummary), total: count ?? 0, page: pageNum, limit: limitNum });
+    let items = (data ?? []).map(toAdminOrderSummary);
+    let total = count ?? 0;
+    // Custom-order-ness lives in order_items JSON, not a queryable column — filtered
+    // in-app after the page loads. Fine at this catalog's order volume.
+    if (custom === "true") {
+      items = items.filter((i) => i.isCustomOrder);
+      total = items.length;
+    } else if (custom === "false") {
+      items = items.filter((i) => !i.isCustomOrder);
+      total = items.length;
+    }
+
+    res.json({ items, total, page: pageNum, limit: limitNum });
   } catch (err) {
     next(err);
   }
@@ -60,6 +81,8 @@ adminOrdersRouter.get("/:id", async (req, res, next) => {
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Order not found");
 
+    const invoice = await getInvoiceForOrder(data.id);
+
     res.json({
       ...toAdminOrderSummary(data),
       subtotal: Number(data.subtotal),
@@ -72,16 +95,22 @@ adminOrdersRouter.get("/:id", async (req, res, next) => {
       guestPhone: data.guest_phone,
       razorpayOrderId: data.razorpay_order_id,
       razorpayPaymentId: data.razorpay_payment_id,
+      courier: data.courier,
+      adminNotes: data.admin_notes,
+      customerNotes: data.customer_notes,
+      invoiceNumber: invoice?.invoice_number ?? null,
       items: (data.order_items ?? []).map((i: any) => ({
         id: i.id,
         productId: i.product_id,
         name: i.product_name_snapshot,
+        sku: i.product_sku_snapshot,
         image: i.product_image_snapshot,
         unitPrice: Number(i.unit_price_snapshot),
         quantity: i.quantity,
         lineTotal: Number(i.line_total),
         selectedColor: i.selected_color_hex,
         customText: i.custom_text,
+        customizations: i.customizations ?? [],
       })),
       statusHistory: (data.order_status_history ?? [])
         .slice()
@@ -92,17 +121,36 @@ adminOrdersRouter.get("/:id", async (req, res, next) => {
   }
 });
 
+const ORDER_STATUSES = ["pending_payment", "confirmed", "in_production", "ready", "shipped", "delivered", "cancelled", "refunded", "partially_refunded"] as const;
+
+// Templates to fire when an order moves into each status — "New"/pending_payment and
+// partially_refunded have no dedicated template in this pass.
+const STATUS_EMAIL_TYPE: Partial<Record<(typeof ORDER_STATUSES)[number], string>> = {
+  confirmed: "order_confirmed",
+  in_production: "order_making",
+  ready: "order_ready",
+  shipped: "order_shipped",
+  delivered: "order_delivered",
+  cancelled: "order_cancelled",
+};
+
 const statusUpdateSchema = z.object({
-  status: z.enum(["pending_payment", "confirmed", "in_production", "shipped", "delivered", "cancelled", "refunded"]),
+  status: z.enum(ORDER_STATUSES),
   note: z.string().max(500).optional(),
+  trackingNumber: z.string().optional().nullable(),
+  courier: z.string().optional().nullable(),
 });
 
 adminOrdersRouter.patch("/:id/status", validate(statusUpdateSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof statusUpdateSchema>;
+    const update: Record<string, unknown> = { status: body.status };
+    if (body.trackingNumber !== undefined) update.tracking_number = body.trackingNumber;
+    if (body.courier !== undefined) update.courier = body.courier;
+
     const { data: order, error } = await supabaseAdmin
       .from("orders")
-      .update({ status: body.status })
+      .update(update)
       .eq("id", req.params.id)
       .select("*")
       .maybeSingle();
@@ -132,6 +180,124 @@ adminOrdersRouter.patch("/:id/status", validate(statusUpdateSchema), async (req,
       }
     }
 
+    const emailType = STATUS_EMAIL_TYPE[body.status];
+    const customerEmail = order.guest_email ?? order.shipping_address?.email;
+    if (emailType && customerEmail) {
+      sendTemplatedEmail({
+        type: emailType,
+        to: customerEmail,
+        variables: {
+          customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
+          order_number: order.order_number,
+          order_total: formatPrice(Number(order.total)),
+          tracking_number: order.tracking_number ?? "",
+          store_name: "Suthrayaa",
+        },
+        relatedOrderId: order.id,
+      }).catch(() => {});
+
+      if (body.status === "cancelled" || body.status === "refunded") {
+        sendTemplatedEmail({
+          type: "refund_processed",
+          to: customerEmail,
+          variables: {
+            customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
+            order_number: order.order_number,
+            order_total: formatPrice(Number(order.total)),
+            store_name: "Suthrayaa",
+          },
+          relatedOrderId: order.id,
+        }).catch(() => {});
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const notesSchema = z.object({ adminNotes: z.string().max(2000).optional().nullable(), customerNotes: z.string().max(2000).optional().nullable() });
+adminOrdersRouter.patch("/:id/notes", validate(notesSchema), async (req, res, next) => {
+  try {
+    const body = req.body as z.infer<typeof notesSchema>;
+    const update: Record<string, unknown> = {};
+    if (body.adminNotes !== undefined) update.admin_notes = body.adminNotes;
+    if (body.customerNotes !== undefined) update.customer_notes = body.customerNotes;
+    const { error } = await supabaseAdmin.from("orders").update(update).eq("id", req.params.id);
+    if (error) throw HttpError.internal(error.message);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Invoice actions ----
+
+adminOrdersRouter.get("/:id/invoice", async (req, res, next) => {
+  try {
+    const invoice = await getInvoiceForOrder(req.params.id);
+    if (!invoice) throw HttpError.notFound("No invoice for this order yet");
+    const { data: order } = await supabaseAdmin.from("orders").select("status, payment_status").eq("id", req.params.id).single();
+    res.json({
+      invoiceNumber: invoice.invoice_number,
+      createdAt: invoice.created_at,
+      snapshot: invoice.snapshot,
+      orderStatus: order?.status,
+      paymentStatus: order?.payment_status,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminOrdersRouter.post("/:id/invoice/regenerate", async (req, res, next) => {
+  try {
+    let invoice = await getInvoiceForOrder(req.params.id);
+    if (!invoice) invoice = await createInvoiceForOrder(req.params.id);
+    res.json({ invoiceNumber: invoice.invoice_number });
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminOrdersRouter.get("/:id/invoice/pdf", async (req, res, next) => {
+  try {
+    let invoice = await getInvoiceForOrder(req.params.id);
+    if (!invoice) invoice = await createInvoiceForOrder(req.params.id);
+    const { data: order } = await supabaseAdmin.from("orders").select("status, payment_status").eq("id", req.params.id).single();
+
+    const pdf = await renderInvoicePdf(invoice.invoice_number, invoice.snapshot, order?.status ?? "confirmed", order?.payment_status ?? "pending");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${invoice.invoice_number}.pdf"`);
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminOrdersRouter.post("/:id/invoice/email", async (req, res, next) => {
+  try {
+    let invoice = await getInvoiceForOrder(req.params.id);
+    if (!invoice) invoice = await createInvoiceForOrder(req.params.id);
+    const { data: order } = await supabaseAdmin.from("orders").select("*").eq("id", req.params.id).single();
+    if (!order) throw HttpError.notFound("Order not found");
+    const to = order.guest_email ?? order.shipping_address?.email;
+    if (!to) throw HttpError.badRequest("This order has no email address on file");
+
+    const pdf = await renderInvoicePdf(invoice.invoice_number, invoice.snapshot, order.status, order.payment_status);
+    await sendTemplatedEmail({
+      type: "invoice_email",
+      to,
+      variables: {
+        customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
+        order_number: order.order_number,
+        invoice_number: invoice.invoice_number,
+        store_name: "Suthrayaa",
+      },
+      relatedOrderId: order.id,
+      attachments: [{ filename: `${invoice.invoice_number}.pdf`, content: pdf }],
+    });
     res.json({ ok: true });
   } catch (err) {
     next(err);

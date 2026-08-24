@@ -36,6 +36,8 @@ import { adminCouponsRouter } from "./modules/admin/admin.coupons.routes.js";
 import { adminCustomersRouter } from "./modules/admin/admin.customers.routes.js";
 import { adminReviewsRouter } from "./modules/admin/admin.reviews.routes.js";
 import { adminCustomizationTemplatesRouter } from "./modules/admin/admin.customizationTemplates.routes.js";
+import { adminEmailTemplatesRouter, adminEmailLogsRouter } from "./modules/admin/admin.emails.routes.js";
+import { adminInvoiceSettingsRouter } from "./modules/admin/admin.settings.routes.js";
 import { analyticsRouter } from "./modules/analytics/analytics.routes.js";
 
 export function createApp() {
@@ -89,6 +91,9 @@ export function createApp() {
   app.use("/api/admin/customers", adminCustomersRouter);
   app.use("/api/admin/reviews", adminReviewsRouter);
   app.use("/api/admin/customization-templates", adminCustomizationTemplatesRouter);
+  app.use("/api/admin/emails/templates", adminEmailTemplatesRouter);
+  app.use("/api/admin/emails/logs", adminEmailLogsRouter);
+  app.use("/api/admin/settings/invoice", adminInvoiceSettingsRouter);
   app.use("/api/admin/analytics", analyticsRouter);
 
   app.use(notFoundHandler);

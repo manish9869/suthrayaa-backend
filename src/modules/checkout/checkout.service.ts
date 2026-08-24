@@ -6,7 +6,14 @@ import { env } from "../../config/env.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logger } from "../../lib/logger.js";
 import { PRODUCT_SELECT, getEffectivePrice } from "../catalog/serializers.js";
-import { sendOrderConfirmationEmail, sendAdminOrderNotification } from "../email/email.service.js";
+import {
+  sendAdminOrderNotification,
+  sendTemplatedEmail,
+  renderOrderDetailsHtml,
+  renderAddressHtml,
+} from "../email/email.service.js";
+import { formatPrice } from "../../lib/format.js";
+import { createInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -279,9 +286,14 @@ export async function validateCoupon(code: string, subtotal: number, customerId?
   return coupon;
 }
 
-function generateOrderNumber() {
-  const year = new Date().getFullYear();
-  return `SUT-${year}-${randomInt(100000, 999999)}`;
+async function generateOrderNumber(): Promise<string> {
+  const { data, error } = await supabaseAdmin.rpc("next_order_number");
+  if (error || !data) {
+    // Sequence generation is best-effort infrastructure — a random fallback keeps
+    // checkout working even if the counter function isn't available yet.
+    return `ORD-${new Date().getFullYear()}-${randomInt(1000, 9999)}`;
+  }
+  return data as unknown as string;
 }
 
 export interface ShippingAddressInput {
@@ -315,7 +327,7 @@ export async function placeOrder(input: PlaceOrderInput) {
     customerId: input.customerId,
   });
 
-  const orderNumber = generateOrderNumber();
+  const orderNumber = await generateOrderNumber();
   const isCod = input.paymentMethod === "cod";
 
   const { data: order, error: orderError } = await supabaseAdmin
@@ -350,6 +362,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       order_id: order.id,
       product_id: l.productId,
       product_name_snapshot: l.name,
+      product_sku_snapshot: l.sku,
       product_image_snapshot: l.image,
       unit_price_snapshot: l.unitPrice,
       selected_color_hex: l.selectedColorHex,
@@ -376,6 +389,7 @@ export async function placeOrder(input: PlaceOrderInput) {
     if (input.customerId) await clearServerCart(input.customerId);
 
     notifyOrderPlaced({
+      orderId: order.id,
       orderNumber: order.order_number,
       paymentMethod: "cod",
       subtotal: priced.subtotal,
@@ -424,6 +438,7 @@ async function clearServerCart(customerId: string) {
 }
 
 interface NotifyOrderPlacedArgs {
+  orderId: string;
   orderNumber: string;
   paymentMethod: string;
   subtotal: number;
@@ -435,7 +450,8 @@ interface NotifyOrderPlacedArgs {
   items: { name: string; quantity: number; unitPrice: number; lineTotal: number; selectedColorName?: string | null; customText?: string | null }[];
 }
 
-/** Fire-and-forget — email failures are logged internally and never block checkout. */
+/** Fire-and-forget — invoice generation and email failures are logged internally and
+ * never block checkout (the order itself is already committed by the time this runs). */
 function notifyOrderPlaced(args: NotifyOrderPlacedArgs) {
   const payload = {
     orderNumber: args.orderNumber,
@@ -450,9 +466,42 @@ function notifyOrderPlaced(args: NotifyOrderPlacedArgs) {
     shippingAddress: args.shippingAddress,
     items: args.items,
   };
-  Promise.all([sendOrderConfirmationEmail(payload), sendAdminOrderNotification(payload)]).catch((err) =>
-    logger.error({ err, orderNumber: args.orderNumber }, "Order email notification failed")
+
+  sendAdminOrderNotification(payload).catch((err) =>
+    logger.error({ err, orderNumber: args.orderNumber }, "Admin order notification failed")
   );
+
+  (async () => {
+    const invoice = await createInvoiceForOrder(args.orderId);
+    if (!payload.customerEmail) return;
+
+    let attachments: { filename: string; content: Buffer }[] | undefined;
+    try {
+      const pdf = await renderInvoicePdf(invoice.invoice_number, invoice.snapshot, "confirmed", "paid");
+      attachments = [{ filename: `${invoice.invoice_number}.pdf`, content: pdf }];
+    } catch (err) {
+      logger.error({ err, orderId: args.orderId }, "Invoice PDF generation failed — sending order_placed without attachment");
+    }
+
+    await sendTemplatedEmail({
+      type: "order_placed",
+      to: payload.customerEmail,
+      variables: {
+        customer_name: payload.customerName,
+        order_number: payload.orderNumber,
+        order_date: new Date().toLocaleDateString("en-IN"),
+        order_total: formatPrice(payload.total),
+        store_name: "Suthrayaa",
+        invoice_number: invoice.invoice_number,
+      },
+      rawVariables: {
+        items_table: renderOrderDetailsHtml(payload),
+        address_block: renderAddressHtml(payload.shippingAddress),
+      },
+      relatedOrderId: args.orderId,
+      attachments,
+    });
+  })().catch((err) => logger.error({ err, orderNumber: args.orderNumber }, "Order placed notification failed"));
 }
 
 export async function verifyRazorpayPayment(input: {
@@ -520,6 +569,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
   if (order.customer_id) await clearServerCart(order.customer_id);
 
   notifyOrderPlaced({
+    orderId: order.id,
     orderNumber: order.order_number,
     paymentMethod: order.payment_method,
     subtotal: Number(order.subtotal),
@@ -537,6 +587,21 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
       customText: i.custom_text,
     })),
   });
+
+  const email = order.shipping_address?.email as string | undefined;
+  if (email) {
+    sendTemplatedEmail({
+      type: "payment_successful",
+      to: email,
+      variables: {
+        customer_name: `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim(),
+        order_number: order.order_number,
+        order_total: formatPrice(Number(order.total)),
+        store_name: "Suthrayaa",
+      },
+      relatedOrderId: order.id,
+    }).catch((err) => logger.error({ err, orderId: order.id }, "payment_successful email failed"));
+  }
 
   return order;
 }

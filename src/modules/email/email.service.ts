@@ -2,6 +2,7 @@ import nodemailer from "nodemailer";
 import { env, isEmailConfigured } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { formatPrice } from "../../lib/format.js";
+import { supabaseAdmin } from "../../config/supabase.js";
 
 const transporter = isEmailConfigured
   ? nodemailer.createTransport({
@@ -177,4 +178,111 @@ export async function sendAdminOrderNotification(payload: OrderEmailPayload) {
   );
 
   await send(env.ADMIN_NOTIFICATION_EMAIL, `🧶 New order ${payload.orderNumber} — ${formatPrice(payload.total)}`, html);
+}
+
+/** Renders the same branded items/summary/address blocks used above, for use as a trusted
+ * ("raw", not HTML-escaped) template variable in the admin-editable email system below. */
+export function renderOrderDetailsHtml(payload: OrderEmailPayload) {
+  return `
+    <table width="100%" cellpadding="0" cellspacing="0">${itemsRows(payload.items)}</table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
+      ${summaryRows(payload)}
+      <tr>
+        <td style="padding:10px 0 0;font-weight:700;border-top:1px solid #e8e0d4;">Total</td>
+        <td style="padding:10px 0 0;font-weight:700;text-align:right;border-top:1px solid #e8e0d4;">${formatPrice(payload.total)}</td>
+      </tr>
+    </table>`;
+}
+export function renderAddressHtml(a: OrderEmailPayload["shippingAddress"]) {
+  return addressBlock(a);
+}
+
+// ---- Admin-editable templated emails (order lifecycle, payment, custom orders, invoices) ----
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** {{variables}} are HTML-escaped (may contain customer-supplied text); rawVariables are
+ * trusted, already-safe HTML built server-side (e.g. an items table) and inserted as-is. */
+export function substituteTemplate(
+  template: string,
+  variables: Record<string, string>,
+  rawVariables: Record<string, string> = {}
+): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
+    if (key in rawVariables) return rawVariables[key];
+    if (key in variables) return escapeHtml(variables[key]);
+    return match;
+  });
+}
+
+export interface TemplatedEmailInput {
+  type: string;
+  to: string;
+  variables: Record<string, string>;
+  rawVariables?: Record<string, string>;
+  relatedOrderId?: string;
+  attachments?: { filename: string; content: Buffer }[];
+}
+
+/** Looks up the admin-editable template by type, renders it, sends it, and logs the
+ * attempt. Never throws — a broken/misconfigured email must never block an order. */
+export async function sendTemplatedEmail(input: TemplatedEmailInput) {
+  try {
+    const { data: template } = await supabaseAdmin
+      .from("email_templates")
+      .select("*")
+      .eq("type", input.type)
+      .maybeSingle();
+    if (!template || !template.enabled) return;
+
+    const subject = substituteTemplate(template.subject, input.variables, input.rawVariables);
+    const bodyHtml = substituteTemplate(template.body_html, input.variables, input.rawVariables);
+    const html = wrapEmail(subject, bodyHtml);
+
+    if (!transporter) {
+      logger.warn({ to: input.to, type: input.type }, "[dummy] Templated email not sent — email not configured yet");
+      return;
+    }
+
+    let status: "sent" | "failed" = "sent";
+    let errorMessage: string | null = null;
+    try {
+      await transporter.sendMail({
+        from: `Suthrayaa <${env.GMAIL_USER}>`,
+        to: input.to,
+        subject,
+        html,
+        attachments: input.attachments,
+      });
+    } catch (err) {
+      status = "failed";
+      errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error({ err, to: input.to, type: input.type }, "Templated email failed to send");
+    }
+
+    await supabaseAdmin.from("email_logs").insert({
+      type: input.type,
+      recipient: input.to,
+      order_id: input.relatedOrderId ?? null,
+      subject,
+      body_html: html,
+      status,
+      error_message: errorMessage,
+    });
+  } catch (err) {
+    logger.error({ err, type: input.type }, "sendTemplatedEmail failed unexpectedly");
+  }
+}
+
+/** Re-sends a previously logged email exactly as it was rendered — used for the admin's "retry failed" action. */
+export async function resendLoggedEmail(to: string, subject: string, html: string) {
+  if (!transporter) throw new Error("Email is not configured");
+  await transporter.sendMail({ from: `Suthrayaa <${env.GMAIL_USER}>`, to, subject, html });
 }
