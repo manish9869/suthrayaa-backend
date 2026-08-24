@@ -12,6 +12,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "seed": "tsx scripts/seed-from-legacy-data.ts",
+    "seed:categories": "tsx scripts/seed-categories.ts",
+    "seed:catalog": "tsx scripts/reseed-real-catalog.ts",
     "setup:storage": "tsx scripts/setup-storage.ts",
     "list:users": "tsx scripts/list-users.ts",
     "promote:admin": "tsx scripts/promote-admin.ts"

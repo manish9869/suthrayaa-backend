@@ -23,8 +23,8 @@ export class HttpError extends Error {
   static notFound(message = "Not found") {
     return new HttpError(404, message, "NOT_FOUND");
   }
-  static conflict(message: string) {
-    return new HttpError(409, message, "CONFLICT");
+  static conflict(message: string, details?: unknown) {
+    return new HttpError(409, message, "CONFLICT", details);
   }
   static internal(message = "Internal server error") {
     return new HttpError(500, message, "INTERNAL");

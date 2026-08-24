@@ -7,6 +7,7 @@ import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { imageUpload, uploadProductImage, deleteStorageObject, BUCKETS } from "../storage/upload.js";
+import { generateUniqueSlug, isSlugTaken } from "../../lib/slug.js";
 
 export const adminProductsRouter = Router();
 adminProductsRouter.use(authenticate, requireAdmin);
@@ -28,7 +29,10 @@ adminProductsRouter.get("/", async (req, res, next) => {
     if (error) throw HttpError.internal(error.message);
 
     res.json({
-      items: (data ?? []).map((p) => ({ ...toProductDTO(p, { includeDisabledCustomizations: true }), isActive: p.is_active })),
+      items: (data ?? []).map((p) => ({
+        ...toProductDTO(p, { includeDisabledCustomizations: true, admin: true }),
+        isActive: p.is_active,
+      })),
       total: count ?? 0,
       page: pageNum,
       limit: limitNum,
@@ -47,11 +51,59 @@ adminProductsRouter.get("/:id", async (req, res, next) => {
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Product not found");
-    res.json({ ...toProductDTO(data, { includeDisabledCustomizations: true }), isActive: data.is_active });
+    res.json({ ...toProductDTO(data, { includeDisabledCustomizations: true, admin: true }), isActive: data.is_active });
   } catch (err) {
     next(err);
   }
 });
+
+const STATUS_VALUES = ["draft", "active", "hidden", "out_of_stock", "archived"] as const;
+const PRODUCT_TYPE_VALUES = ["ready_to_ship", "made_to_order", "custom_order"] as const;
+
+// A product is publicly visible for exactly two statuses: "active" (fully buyable) and
+// "out_of_stock" (shown with an unbuyable badge — checkout's own stock check keeps it from
+// actually being purchased). Draft/hidden/archived are never publicly queryable.
+function isActiveForStatus(status: string) {
+  return status === "active" || status === "out_of_stock";
+}
+
+// CR-XXXX-YYYY style code from a category name — a starting point the admin can always edit,
+// not a guarantee of matching hand-picked SKUs from earlier catalog work.
+function skuSegment(name: string): string {
+  const firstWord = name.replace(/[^a-zA-Z\s]/g, "").trim().split(/\s+/)[0] ?? "";
+  return firstWord.slice(0, 4).toUpperCase() || "GEN";
+}
+
+/**
+ * Auto-suggests a SKU from the product's category — CR-{subcategory}-{leaf}-{next number}.
+ * "Leaf" is the selected category itself when it has a parent, "sub" is that parent; if a
+ * top-level category was selected directly (no parent), there's no natural code to build
+ * from, so this returns null and the admin fills the SKU in by hand.
+ */
+async function generateProductSku(categoryId: string | null | undefined): Promise<string | null> {
+  if (!categoryId) return null;
+  const { data: category } = await supabaseAdmin
+    .from("categories")
+    .select("id, name, parent_id")
+    .eq("id", categoryId)
+    .maybeSingle();
+  if (!category?.parent_id) return null;
+
+  const { data: parent } = await supabaseAdmin
+    .from("categories")
+    .select("id, name")
+    .eq("id", category.parent_id)
+    .maybeSingle();
+  if (!parent) return null;
+
+  const prefix = `CR-${skuSegment(parent.name)}-${skuSegment(category.name)}-`;
+  const { data: existing } = await supabaseAdmin.from("products").select("sku").ilike("sku", `${prefix}%`);
+  const numbers = (existing ?? [])
+    .map((p) => parseInt((p.sku ?? "").slice(prefix.length), 10))
+    .filter((n) => !Number.isNaN(n));
+  const next = (numbers.length ? Math.max(...numbers) : 0) + 1;
+  return `${prefix}${String(next).padStart(3, "0")}`;
+}
 
 const productSchema = z.object({
   sku: z.string().min(1).optional().nullable(),
@@ -59,12 +111,14 @@ const productSchema = z.object({
   slug: z
     .string()
     .min(1)
-    .regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers, and hyphens only"),
+    .regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers, and hyphens only")
+    .optional(),
   description: z.string().default(""),
   shortDescription: z.string().default(""),
   price: z.number().min(0),
   comparePrice: z.number().min(0).optional().nullable(),
   categoryId: z.string().uuid().optional().nullable(),
+  additionalCategoryIds: z.array(z.string().uuid()).optional(),
   tags: z.array(z.string()).default([]),
   stock: z.number().int().min(0).default(0),
   lowStockThreshold: z.number().int().min(0).optional(),
@@ -78,17 +132,66 @@ const productSchema = z.object({
   careInstructions: z.array(z.string()).default([]),
   colorIds: z.array(z.string().uuid()).optional(),
   customizable: z.boolean().optional(),
+  status: z.enum(STATUS_VALUES).optional(),
+  productType: z.enum(PRODUCT_TYPE_VALUES).optional(),
+  processingMinDays: z.number().int().min(0).optional().nullable(),
+  processingMaxDays: z.number().int().min(0).optional().nullable(),
+  processingMessage: z.string().optional().nullable(),
+  costPrice: z.number().min(0).optional().nullable(),
+  isTaxable: z.boolean().optional(),
+  taxClass: z.string().optional().nullable(),
+  salePrice: z.number().min(0).optional().nullable(),
+  saleStartDate: z.string().optional().nullable(),
+  saleEndDate: z.string().optional().nullable(),
+  allowBackorders: z.boolean().optional(),
+  continueSellingWhenOutOfStock: z.boolean().optional(),
+  trackInventory: z.boolean().optional(),
+  isPhysical: z.boolean().optional(),
+  weight: z.number().min(0).optional().nullable(),
+  length: z.number().min(0).optional().nullable(),
+  width: z.number().min(0).optional().nullable(),
+  height: z.number().min(0).optional().nullable(),
+  freeShipping: z.boolean().optional(),
+  shippingClass: z.string().optional().nullable(),
+  localPickupAvailable: z.boolean().optional(),
+  metaTitle: z.string().optional().nullable(),
+  metaDescription: z.string().optional().nullable(),
+  searchKeywords: z.string().optional().nullable(),
 });
+
+/** Writes the product_categories mapping (primary + additional) for a product. */
+async function syncProductCategories(productId: string, categoryId: string | null | undefined, additionalIds?: string[]) {
+  await supabaseAdmin.from("product_categories").delete().eq("product_id", productId);
+  const rows: { product_id: string; category_id: string; is_primary: boolean }[] = [];
+  if (categoryId) rows.push({ product_id: productId, category_id: categoryId, is_primary: true });
+  for (const id of additionalIds ?? []) {
+    if (id !== categoryId) rows.push({ product_id: productId, category_id: id, is_primary: false });
+  }
+  if (rows.length) await supabaseAdmin.from("product_categories").insert(rows);
+}
 
 adminProductsRouter.post("/", validate(productSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof productSchema>;
+
+    if (body.sku) {
+      const { data: existingSku } = await supabaseAdmin.from("products").select("id").eq("sku", body.sku).maybeSingle();
+      if (existingSku) throw HttpError.badRequest(`SKU "${body.sku}" is already in use by another product`);
+    }
+    const sku = body.sku || (await generateProductSku(body.categoryId));
+    if (body.slug && (await isSlugTaken("products", body.slug))) {
+      throw HttpError.badRequest(`The slug "${body.slug}" is already in use by another product`);
+    }
+    const slug = body.slug || (await generateUniqueSlug("products", body.name));
+
+    const status = body.status ?? (body.isActive === false ? "archived" : "active");
+
     const { data: product, error } = await supabaseAdmin
       .from("products")
       .insert({
-        sku: body.sku,
+        sku,
         name: body.name,
-        slug: body.slug,
+        slug,
         description: body.description,
         short_description: body.shortDescription,
         price: body.price,
@@ -100,18 +203,44 @@ adminProductsRouter.post("/", validate(productSchema), async (req, res, next) =>
         featured: body.featured,
         bestseller: body.bestseller,
         new_arrival: body.newArrival,
-        is_active: body.isActive ?? true,
+        is_active: isActiveForStatus(status),
+        status,
         estimated_delivery: body.estimatedDelivery,
         dimensions: body.dimensions,
         materials: body.materials,
         care_instructions: body.careInstructions,
         customizable: body.customizable ?? false,
+        product_type: body.productType,
+        processing_min_days: body.processingMinDays,
+        processing_max_days: body.processingMaxDays,
+        processing_message: body.processingMessage,
+        cost_price: body.costPrice,
+        is_taxable: body.isTaxable,
+        tax_class: body.taxClass,
+        sale_price: body.salePrice,
+        sale_start_date: body.saleStartDate,
+        sale_end_date: body.saleEndDate,
+        allow_backorders: body.allowBackorders,
+        continue_selling_when_out_of_stock: body.continueSellingWhenOutOfStock,
+        track_inventory: body.trackInventory,
+        is_physical: body.isPhysical,
+        weight: body.weight,
+        length: body.length,
+        width: body.width,
+        height: body.height,
+        free_shipping: body.freeShipping,
+        shipping_class: body.shippingClass,
+        local_pickup_available: body.localPickupAvailable,
+        meta_title: body.metaTitle,
+        meta_description: body.metaDescription,
+        search_keywords: body.searchKeywords,
       })
       .select("*")
       .single();
     if (error) throw HttpError.internal(error.message);
 
     await supabaseAdmin.from("customization_rules").insert({ product_id: product.id });
+    await syncProductCategories(product.id, body.categoryId, body.additionalCategoryIds);
 
     if (body.colorIds?.length) {
       await supabaseAdmin
@@ -120,7 +249,7 @@ adminProductsRouter.post("/", validate(productSchema), async (req, res, next) =>
     }
 
     const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", product.id).single();
-    res.status(201).json(toProductDTO(full, { includeDisabledCustomizations: true }));
+    res.status(201).json({ ...toProductDTO(full, { includeDisabledCustomizations: true, admin: true }), isActive: full.is_active });
   } catch (err) {
     next(err);
   }
@@ -130,9 +259,19 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
   try {
     const body = req.body as Partial<z.infer<typeof productSchema>>;
     const patch: Record<string, unknown> = {};
-    if (body.sku !== undefined) patch.sku = body.sku;
+    if (body.sku !== undefined) {
+      if (body.sku && (await isSlugTaken("products", body.sku, req.params.id))) {
+        throw HttpError.badRequest(`SKU "${body.sku}" is already in use by another product`);
+      }
+      patch.sku = body.sku;
+    }
     if (body.name !== undefined) patch.name = body.name;
-    if (body.slug !== undefined) patch.slug = body.slug;
+    if (body.slug !== undefined) {
+      if (await isSlugTaken("products", body.slug, req.params.id)) {
+        throw HttpError.badRequest(`The slug "${body.slug}" is already in use by another product`);
+      }
+      patch.slug = body.slug;
+    }
     if (body.description !== undefined) patch.description = body.description;
     if (body.shortDescription !== undefined) patch.short_description = body.shortDescription;
     if (body.price !== undefined) patch.price = body.price;
@@ -144,16 +283,55 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
     if (body.featured !== undefined) patch.featured = body.featured;
     if (body.bestseller !== undefined) patch.bestseller = body.bestseller;
     if (body.newArrival !== undefined) patch.new_arrival = body.newArrival;
-    if (body.isActive !== undefined) patch.is_active = body.isActive;
     if (body.estimatedDelivery !== undefined) patch.estimated_delivery = body.estimatedDelivery;
     if (body.dimensions !== undefined) patch.dimensions = body.dimensions;
     if (body.materials !== undefined) patch.materials = body.materials;
     if (body.careInstructions !== undefined) patch.care_instructions = body.careInstructions;
     if (body.customizable !== undefined) patch.customizable = body.customizable;
+    if (body.productType !== undefined) patch.product_type = body.productType;
+    if (body.processingMinDays !== undefined) patch.processing_min_days = body.processingMinDays;
+    if (body.processingMaxDays !== undefined) patch.processing_max_days = body.processingMaxDays;
+    if (body.processingMessage !== undefined) patch.processing_message = body.processingMessage;
+    if (body.costPrice !== undefined) patch.cost_price = body.costPrice;
+    if (body.isTaxable !== undefined) patch.is_taxable = body.isTaxable;
+    if (body.taxClass !== undefined) patch.tax_class = body.taxClass;
+    if (body.salePrice !== undefined) patch.sale_price = body.salePrice;
+    if (body.saleStartDate !== undefined) patch.sale_start_date = body.saleStartDate;
+    if (body.saleEndDate !== undefined) patch.sale_end_date = body.saleEndDate;
+    if (body.allowBackorders !== undefined) patch.allow_backorders = body.allowBackorders;
+    if (body.continueSellingWhenOutOfStock !== undefined) patch.continue_selling_when_out_of_stock = body.continueSellingWhenOutOfStock;
+    if (body.trackInventory !== undefined) patch.track_inventory = body.trackInventory;
+    if (body.isPhysical !== undefined) patch.is_physical = body.isPhysical;
+    if (body.weight !== undefined) patch.weight = body.weight;
+    if (body.length !== undefined) patch.length = body.length;
+    if (body.width !== undefined) patch.width = body.width;
+    if (body.height !== undefined) patch.height = body.height;
+    if (body.freeShipping !== undefined) patch.free_shipping = body.freeShipping;
+    if (body.shippingClass !== undefined) patch.shipping_class = body.shippingClass;
+    if (body.localPickupAvailable !== undefined) patch.local_pickup_available = body.localPickupAvailable;
+    if (body.metaTitle !== undefined) patch.meta_title = body.metaTitle;
+    if (body.metaDescription !== undefined) patch.meta_description = body.metaDescription;
+    if (body.searchKeywords !== undefined) patch.search_keywords = body.searchKeywords;
+
+    // status is the source of truth for visibility; is_active is always kept in lockstep so
+    // every existing read path that filters on is_active keeps working unchanged. A bare
+    // isActive:false (no status given) is treated as archiving, for any older caller.
+    if (body.status !== undefined) {
+      patch.status = body.status;
+      patch.is_active = isActiveForStatus(body.status);
+    } else if (body.isActive !== undefined) {
+      patch.is_active = body.isActive;
+      patch.status = body.isActive ? "active" : "archived";
+    }
 
     if (Object.keys(patch).length) {
       const { error } = await supabaseAdmin.from("products").update(patch).eq("id", req.params.id);
       if (error) throw HttpError.internal(error.message);
+    }
+
+    if (body.categoryId !== undefined || body.additionalCategoryIds !== undefined) {
+      const { data: current } = await supabaseAdmin.from("products").select("category_id").eq("id", req.params.id).single();
+      await syncProductCategories(req.params.id, body.categoryId ?? current?.category_id ?? null, body.additionalCategoryIds);
     }
 
     if (body.colorIds) {
@@ -172,17 +350,46 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
       .maybeSingle();
     if (fetchErr) throw HttpError.internal(fetchErr.message);
     if (!full) throw HttpError.notFound("Product not found");
-    res.json(toProductDTO(full, { includeDisabledCustomizations: true }));
+    res.json({ ...toProductDTO(full, { includeDisabledCustomizations: true, admin: true }), isActive: full.is_active });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Duplicate an existing product — new SKU/slug required, everything else copied
+// (images, customizations, and category assignment are NOT copied; admin fills those in).
+adminProductsRouter.post("/:id/duplicate", async (req, res, next) => {
+  try {
+    const { data: source, error } = await supabaseAdmin.from("products").select("*").eq("id", req.params.id).maybeSingle();
+    if (error) throw HttpError.internal(error.message);
+    if (!source) throw HttpError.notFound("Product not found");
+
+    const name = `${source.name} (Copy)`;
+    const slug = await generateUniqueSlug("products", name);
+    const { id: _id, created_at: _createdAt, updated_at: _updatedAt, sku: _sku, rating: _rating, review_count: _reviewCount, ...rest } = source;
+
+    const { data: copy, error: insertErr } = await supabaseAdmin
+      .from("products")
+      .insert({ ...rest, name, slug, sku: null, status: "draft", is_active: false })
+      .select("id")
+      .single();
+    if (insertErr) throw HttpError.internal(insertErr.message);
+
+    await supabaseAdmin.from("customization_rules").insert({ product_id: copy.id });
+    if (source.category_id) await syncProductCategories(copy.id, source.category_id, []);
+
+    const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", copy.id).single();
+    res.status(201).json({ ...toProductDTO(full, { includeDisabledCustomizations: true, admin: true }), isActive: full.is_active });
   } catch (err) {
     next(err);
   }
 });
 
 // Soft delete — keeps order history (order_items keeps a snapshot regardless) and simply
-// removes the product from public catalog reads via is_active.
+// removes the product from public catalog reads via is_active/status.
 adminProductsRouter.delete("/:id", async (req, res, next) => {
   try {
-    const { error } = await supabaseAdmin.from("products").update({ is_active: false }).eq("id", req.params.id);
+    const { error } = await supabaseAdmin.from("products").update({ is_active: false, status: "archived" }).eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
     res.status(204).end();
   } catch (err) {
@@ -285,7 +492,7 @@ adminProductsRouter.patch(
       }
 
       const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", req.params.id).single();
-      res.json(toProductDTO(full, { includeDisabledCustomizations: true }));
+      res.json({ ...toProductDTO(full, { includeDisabledCustomizations: true, admin: true }), isActive: full.is_active });
     } catch (err) {
       next(err);
     }
@@ -310,7 +517,7 @@ const customizationGroupSchema = z.object({
 
 async function respondWithFullProduct(res: import("express").Response, productId: string) {
   const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", productId).single();
-  res.json(toProductDTO(full, { includeDisabledCustomizations: true }));
+  res.json({ ...toProductDTO(full, { includeDisabledCustomizations: true, admin: true }), isActive: full.is_active });
 }
 
 adminProductsRouter.post(
@@ -394,6 +601,7 @@ const customizationValueSchema = z.object({
   priceAdjustment: z.number().optional(),
   sortOrder: z.number().int().optional(),
   enabled: z.boolean().optional(),
+  sku: z.string().optional().nullable(),
 });
 
 adminProductsRouter.post(
@@ -402,6 +610,10 @@ adminProductsRouter.post(
   async (req, res, next) => {
     try {
       const b = req.body as z.infer<typeof customizationValueSchema>;
+      if (b.sku) {
+        const { data: existing } = await supabaseAdmin.from("customization_values").select("id").eq("sku", b.sku).maybeSingle();
+        if (existing) throw HttpError.badRequest(`SKU "${b.sku}" is already in use by another option value`);
+      }
       const { error } = await supabaseAdmin.from("customization_values").insert({
         customization_id: req.params.customizationId,
         label: b.label,
@@ -409,6 +621,7 @@ adminProductsRouter.post(
         price_adjustment: b.priceAdjustment ?? 0,
         sort_order: b.sortOrder ?? 0,
         enabled: b.enabled ?? true,
+        sku: b.sku,
       });
       if (error) throw HttpError.internal(error.message);
       await respondWithFullProduct(res, req.params.id);
@@ -430,6 +643,18 @@ adminProductsRouter.patch(
       if (b.priceAdjustment !== undefined) patch.price_adjustment = b.priceAdjustment;
       if (b.sortOrder !== undefined) patch.sort_order = b.sortOrder;
       if (b.enabled !== undefined) patch.enabled = b.enabled;
+      if (b.sku !== undefined) {
+        if (b.sku) {
+          const { data: existing } = await supabaseAdmin
+            .from("customization_values")
+            .select("id")
+            .eq("sku", b.sku)
+            .neq("id", req.params.valueId)
+            .maybeSingle();
+          if (existing) throw HttpError.badRequest(`SKU "${b.sku}" is already in use by another option value`);
+        }
+        patch.sku = b.sku;
+      }
 
       const { error } = await supabaseAdmin
         .from("customization_values")

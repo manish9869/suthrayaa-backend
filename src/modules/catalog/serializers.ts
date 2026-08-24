@@ -13,7 +13,30 @@ export function toCategoryDTO(row: any, productCount = 0) {
     image: row.image_url ?? "",
     productCount,
     parentId: row.parent_id ?? null,
+    isDummy: row.description === "Planned — not yet in production",
+    showInNavigation: row.show_in_navigation ?? true,
+    showOnHomepage: row.show_on_homepage ?? false,
+    isFeatured: row.is_featured ?? false,
+    seoTitle: row.seo_title ?? undefined,
+    seoDescription: row.seo_description ?? undefined,
   };
+}
+
+/**
+ * The one true "what does this product actually cost right now" — used for both display
+ * (storefront price/badge) and checkout math, so a shown price can never diverge from what
+ * gets charged. A sale only applies while active: price set, lower than the regular price,
+ * and (if dates are set) the current time falls inside them.
+ */
+export function getEffectivePrice(row: any): number {
+  const regular = Number(row.price);
+  const sale = row.sale_price != null ? Number(row.sale_price) : null;
+  if (sale == null || !(sale < regular)) return regular;
+
+  const now = Date.now();
+  if (row.sale_start_date && now < new Date(row.sale_start_date).getTime()) return regular;
+  if (row.sale_end_date && now > new Date(row.sale_end_date).getTime()) return regular;
+  return sale;
 }
 
 export function toColorDTO(row: any) {
@@ -91,6 +114,7 @@ function toProductCustomizationDTO(row: any, includeDisabled: boolean) {
       value: v.value,
       priceAdjustment: Number(v.price_adjustment ?? 0),
       enabled: v.enabled,
+      sku: v.sku ?? undefined,
     }));
 
   return {
@@ -118,7 +142,7 @@ function toProductCustomizationsList(rows: any[], includeDisabled: boolean) {
     .map((r) => toProductCustomizationDTO(r, includeDisabled));
 }
 
-export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: boolean } = {}) {
+export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: boolean; admin?: boolean } = {}) {
   const images = (row.product_images ?? [])
     .slice()
     .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
@@ -144,14 +168,20 @@ export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: b
     .reduce((sum: number, c: any) => sum + Math.min(...c.values.map((v: any) => v.priceAdjustment)), 0);
   const hasVariablePricing = customizations.some((c: any) => c.values.some((v: any) => v.priceAdjustment !== 0));
 
-  return {
+  const effectivePrice = getEffectivePrice(row);
+  const onSale = effectivePrice < Number(row.price);
+  const discountPercent = onSale ? Math.round((1 - effectivePrice / Number(row.price)) * 100) : undefined;
+
+  const base = {
     id: row.id,
     sku: row.sku ?? null,
     name: row.name,
     slug: row.slug,
     description: row.description ?? "",
     shortDescription: row.short_description ?? "",
-    price: Number(row.price),
+    price: effectivePrice,
+    originalPrice: onSale ? Number(row.price) : undefined,
+    discountPercent,
     comparePrice: row.compare_price != null ? Number(row.compare_price) : undefined,
     images,
     category: row.category?.name ?? "",
@@ -162,7 +192,7 @@ export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: b
     customizationOptions: toCustomizationOptionsDTO(row.customization_rules),
     customizable: Boolean(row.customizable),
     customizations,
-    fromPrice: hasVariablePricing ? Number(row.price) + fromPriceAdjustment : undefined,
+    fromPrice: hasVariablePricing ? effectivePrice + fromPriceAdjustment : undefined,
     stock: row.stock,
     featured: row.featured,
     bestseller: row.bestseller,
@@ -173,14 +203,52 @@ export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: b
     dimensions: row.dimensions ?? undefined,
     materials: row.materials ?? [],
     careInstructions: row.care_instructions ?? [],
+    status: row.status ?? "active",
+    productType: row.product_type ?? "ready_to_ship",
+    processingMinDays: row.processing_min_days ?? undefined,
+    processingMaxDays: row.processing_max_days ?? undefined,
+    processingMessage: row.processing_message ?? undefined,
+    trackInventory: row.track_inventory ?? true,
+    allowBackorders: row.allow_backorders ?? false,
+    continueSellingWhenOutOfStock: row.continue_selling_when_out_of_stock ?? false,
+    freeShipping: row.free_shipping ?? false,
+    localPickupAvailable: row.local_pickup_available ?? false,
+    metaTitle: row.meta_title ?? undefined,
+    metaDescription: row.meta_description ?? undefined,
+  };
+
+  if (!opts.admin) return base;
+
+  return {
+    ...base,
+    costPrice: row.cost_price != null ? Number(row.cost_price) : undefined,
+    isTaxable: row.is_taxable ?? true,
+    taxClass: row.tax_class ?? undefined,
+    salePrice: row.sale_price != null ? Number(row.sale_price) : undefined,
+    saleStartDate: row.sale_start_date ?? undefined,
+    saleEndDate: row.sale_end_date ?? undefined,
+    lowStockThreshold: row.low_stock_threshold ?? 5,
+    isPhysical: row.is_physical ?? true,
+    weight: row.weight != null ? Number(row.weight) : undefined,
+    length: row.length != null ? Number(row.length) : undefined,
+    width: row.width != null ? Number(row.width) : undefined,
+    height: row.height != null ? Number(row.height) : undefined,
+    shippingClass: row.shipping_class ?? undefined,
+    searchKeywords: row.search_keywords ?? undefined,
+    categoryId: row.category_id ?? null,
+    additionalCategoryIds: (row.product_categories ?? [])
+      .filter((pc: any) => !pc.is_primary)
+      .map((pc: any) => pc.category_id),
+    updatedAt: row.updated_at ?? undefined,
   };
 }
 
 export const PRODUCT_SELECT = `
   *,
-  category:categories(name, slug),
+  category:categories!products_category_id_fkey(name, slug),
   product_images(url, sort_order, is_primary),
   product_colors(sort_order, colors(hex, name)),
+  product_categories(category_id, is_primary),
   customization_rules(
     *,
     customization_allowed_colors(colors(hex))

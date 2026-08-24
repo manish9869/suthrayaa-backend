@@ -5,7 +5,7 @@ import { razorpay } from "../../config/razorpay.js";
 import { env } from "../../config/env.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logger } from "../../lib/logger.js";
-import { PRODUCT_SELECT } from "../catalog/serializers.js";
+import { PRODUCT_SELECT, getEffectivePrice } from "../catalog/serializers.js";
 import { sendOrderConfirmationEmail, sendAdminOrderNotification } from "../email/email.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -155,7 +155,9 @@ export async function validateAndPriceCart(
       throw HttpError.badRequest("One of the items in your cart is no longer available");
     }
     if (item.quantity < 1) throw HttpError.badRequest("Invalid quantity");
-    if (product.stock < item.quantity) {
+    const stockIsTracked = product.track_inventory !== false;
+    const stockExempt = product.allow_backorders || product.continue_selling_when_out_of_stock;
+    if (stockIsTracked && !stockExempt && product.stock < item.quantity) {
       throw HttpError.badRequest(`"${product.name}" only has ${product.stock} left in stock`);
     }
 
@@ -197,7 +199,7 @@ export async function validateAndPriceCart(
       selectedColorName = match?.name;
     }
 
-    const basePrice = Number(product.price);
+    const basePrice = getEffectivePrice(product);
     const { snapshot: customizations, priceAdjustmentTotal } = resolveCustomizations(
       product,
       item.customizations ?? []
