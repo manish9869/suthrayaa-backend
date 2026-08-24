@@ -12,6 +12,7 @@ export function toCategoryDTO(row: any, productCount = 0) {
     description: row.description ?? "",
     image: row.image_url ?? "",
     productCount,
+    parentId: row.parent_id ?? null,
   };
 }
 
@@ -78,7 +79,46 @@ function toCustomizationOptionsDTO(rule: any) {
   };
 }
 
-export function toProductDTO(row: any) {
+/** Maps a product_customizations row (with nested customization_values) to the API shape. */
+function toProductCustomizationDTO(row: any, includeDisabled: boolean) {
+  const values = (row.customization_values ?? [])
+    .filter((v: any) => includeDisabled || v.enabled)
+    .slice()
+    .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((v: any) => ({
+      id: v.id,
+      label: v.label,
+      value: v.value,
+      priceAdjustment: Number(v.price_adjustment ?? 0),
+      enabled: v.enabled,
+    }));
+
+  return {
+    id: row.id,
+    name: row.name,
+    label: row.label,
+    type: row.type,
+    required: row.required,
+    enabled: row.enabled,
+    sortOrder: row.sort_order,
+    maxLength: row.max_length ?? undefined,
+    placeholder: row.placeholder ?? undefined,
+    defaultValue: row.default_value ?? undefined,
+    conditionalParentValueId: row.conditional_parent_value_id ?? undefined,
+    values,
+  };
+}
+
+/** Builds the sorted, customer-safe list of customization groups for a product. */
+function toProductCustomizationsList(rows: any[], includeDisabled: boolean) {
+  return rows
+    .filter((r) => includeDisabled || r.enabled)
+    .slice()
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((r) => toProductCustomizationDTO(r, includeDisabled));
+}
+
+export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: boolean } = {}) {
   const images = (row.product_images ?? [])
     .slice()
     .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
@@ -90,8 +130,26 @@ export function toProductDTO(row: any) {
     .map((pc: any) => pc.colors?.hex)
     .filter(Boolean);
 
+  const customizations = toProductCustomizationsList(
+    row.product_customizations ?? [],
+    Boolean(opts.includeDisabledCustomizations)
+  );
+
+  // "From ₹X" pricing on listing cards: lowest total across every required group's
+  // cheapest value (optional groups don't force a price increase by default).
+  const fromPriceAdjustment = customizations
+    .filter((c: any) => c.required)
+    .reduce((sum: number, c: any) => {
+      const cheapest = c.values.reduce(
+        (min: number, v: any) => Math.min(min, v.priceAdjustment),
+        0
+      );
+      return sum + Math.max(0, cheapest);
+    }, 0);
+
   return {
     id: row.id,
+    sku: row.sku ?? null,
     name: row.name,
     slug: row.slug,
     description: row.description ?? "",
@@ -105,6 +163,9 @@ export function toProductDTO(row: any) {
     colors,
     isCustomizable: Boolean(row.customization_rules?.is_customizable),
     customizationOptions: toCustomizationOptionsDTO(row.customization_rules),
+    customizable: Boolean(row.customizable),
+    customizations,
+    fromPrice: customizations.length > 0 ? Number(row.price) + fromPriceAdjustment : undefined,
     stock: row.stock,
     featured: row.featured,
     bestseller: row.bestseller,
@@ -126,5 +187,9 @@ export const PRODUCT_SELECT = `
   customization_rules(
     *,
     customization_allowed_colors(colors(hex))
+  ),
+  product_customizations(
+    *,
+    customization_values!customization_values_customization_id_fkey(*)
   )
 `;

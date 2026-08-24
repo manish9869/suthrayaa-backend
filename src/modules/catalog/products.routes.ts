@@ -66,7 +66,7 @@ productsRouter.get("/", async (req, res, next) => {
     if (error) throw HttpError.internal(error.message);
 
     res.json({
-      items: (data ?? []).map(toProductDTO),
+      items: (data ?? []).map((p) => toProductDTO(p)),
       total: count ?? 0,
       page: pageNum,
       limit: limitNum,

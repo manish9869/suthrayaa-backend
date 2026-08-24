@@ -9,11 +9,18 @@ import { validateAndPriceCart, placeOrder, verifyRazorpayPayment } from "./check
 
 export const checkoutRouter = Router();
 
+const customizationSelectionSchema = z.object({
+  customizationId: z.string().uuid(),
+  valueId: z.string().uuid().optional(),
+  textValue: z.string().max(1000).optional(),
+});
+
 const cartItemSchema = z.object({
   productId: z.string().uuid(),
   quantity: z.number().int().min(1).max(20),
   selectedColor: z.string().optional(),
   customText: z.string().max(200).optional(),
+  customizations: z.array(customizationSelectionSchema).optional(),
 });
 
 const validateCartSchema = z.object({

@@ -284,13 +284,36 @@ meRouter.delete("/wishlist/:productId", async (req, res, next) => {
 
 // ---- Cart (server sync for logged-in users; guests stay on the existing localStorage cart) ----
 
+/** Resolves stored {customizationId, valueId, textValue} selections against the
+ * product's current groups/values so the cart can display labels, not raw IDs. */
+function resolveCartCustomizations(product: any, selections: any[]) {
+  if (!selections?.length) return [];
+  const groups = product.customizations ?? [];
+  return selections
+    .map((s: any) => {
+      const group = groups.find((g: any) => g.id === s.customizationId);
+      if (!group) return null;
+      const value = group.values.find((v: any) => v.id === s.valueId);
+      return {
+        customizationId: group.id,
+        label: group.label,
+        valueLabel: value?.label,
+        textValue: s.textValue,
+        priceAdjustment: value?.priceAdjustment ?? 0,
+      };
+    })
+    .filter(Boolean);
+}
+
 function toCartItemDTO(row: any) {
+  const product = row.products ? toProductDTO(row.products) : null;
   return {
     id: row.id,
-    product: row.products ? toProductDTO(row.products) : null,
+    product,
     quantity: row.quantity,
     selectedColor: row.selected_color_hex || undefined,
     customText: row.custom_text || undefined,
+    customizations: product ? resolveCartCustomizations(product, row.customizations ?? []) : [],
   };
 }
 
@@ -314,6 +337,15 @@ const cartSyncSchema = z.object({
       quantity: z.number().int().min(1).max(20),
       selectedColor: z.string().optional(),
       customText: z.string().max(200).optional(),
+      customizations: z
+        .array(
+          z.object({
+            customizationId: z.string().uuid(),
+            valueId: z.string().uuid().optional(),
+            textValue: z.string().max(1000).optional(),
+          })
+        )
+        .optional(),
     })
   ),
 });
@@ -327,6 +359,7 @@ meRouter.put("/cart", validate(cartSyncSchema), async (req, res, next) => {
     for (const item of body.items) {
       const colorKey = item.selectedColor ?? "";
       const textKey = item.customText ?? "";
+      const customizations = item.customizations ?? [];
 
       const { data: existing } = await supabaseAdmin
         .from("cart_items")
@@ -335,6 +368,7 @@ meRouter.put("/cart", validate(cartSyncSchema), async (req, res, next) => {
         .eq("product_id", item.productId)
         .eq("selected_color_hex", colorKey)
         .eq("custom_text", textKey)
+        .eq("customizations", JSON.stringify(customizations))
         .maybeSingle();
 
       if (existing) {
@@ -349,6 +383,7 @@ meRouter.put("/cart", validate(cartSyncSchema), async (req, res, next) => {
           quantity: item.quantity,
           selected_color_hex: colorKey,
           custom_text: textKey,
+          customizations,
         });
       }
     }

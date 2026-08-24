@@ -28,7 +28,7 @@ adminProductsRouter.get("/", async (req, res, next) => {
     if (error) throw HttpError.internal(error.message);
 
     res.json({
-      items: (data ?? []).map((p) => ({ ...toProductDTO(p), isActive: p.is_active })),
+      items: (data ?? []).map((p) => ({ ...toProductDTO(p, { includeDisabledCustomizations: true }), isActive: p.is_active })),
       total: count ?? 0,
       page: pageNum,
       limit: limitNum,
@@ -47,13 +47,14 @@ adminProductsRouter.get("/:id", async (req, res, next) => {
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Product not found");
-    res.json({ ...toProductDTO(data), isActive: data.is_active });
+    res.json({ ...toProductDTO(data, { includeDisabledCustomizations: true }), isActive: data.is_active });
   } catch (err) {
     next(err);
   }
 });
 
 const productSchema = z.object({
+  sku: z.string().min(1).optional().nullable(),
   name: z.string().min(1),
   slug: z
     .string()
@@ -76,6 +77,7 @@ const productSchema = z.object({
   materials: z.array(z.string()).default([]),
   careInstructions: z.array(z.string()).default([]),
   colorIds: z.array(z.string().uuid()).optional(),
+  customizable: z.boolean().optional(),
 });
 
 adminProductsRouter.post("/", validate(productSchema), async (req, res, next) => {
@@ -84,6 +86,7 @@ adminProductsRouter.post("/", validate(productSchema), async (req, res, next) =>
     const { data: product, error } = await supabaseAdmin
       .from("products")
       .insert({
+        sku: body.sku,
         name: body.name,
         slug: body.slug,
         description: body.description,
@@ -102,6 +105,7 @@ adminProductsRouter.post("/", validate(productSchema), async (req, res, next) =>
         dimensions: body.dimensions,
         materials: body.materials,
         care_instructions: body.careInstructions,
+        customizable: body.customizable ?? false,
       })
       .select("*")
       .single();
@@ -116,7 +120,7 @@ adminProductsRouter.post("/", validate(productSchema), async (req, res, next) =>
     }
 
     const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", product.id).single();
-    res.status(201).json(toProductDTO(full));
+    res.status(201).json(toProductDTO(full, { includeDisabledCustomizations: true }));
   } catch (err) {
     next(err);
   }
@@ -126,6 +130,7 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
   try {
     const body = req.body as Partial<z.infer<typeof productSchema>>;
     const patch: Record<string, unknown> = {};
+    if (body.sku !== undefined) patch.sku = body.sku;
     if (body.name !== undefined) patch.name = body.name;
     if (body.slug !== undefined) patch.slug = body.slug;
     if (body.description !== undefined) patch.description = body.description;
@@ -144,6 +149,7 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
     if (body.dimensions !== undefined) patch.dimensions = body.dimensions;
     if (body.materials !== undefined) patch.materials = body.materials;
     if (body.careInstructions !== undefined) patch.care_instructions = body.careInstructions;
+    if (body.customizable !== undefined) patch.customizable = body.customizable;
 
     if (Object.keys(patch).length) {
       const { error } = await supabaseAdmin.from("products").update(patch).eq("id", req.params.id);
@@ -166,7 +172,7 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
       .maybeSingle();
     if (fetchErr) throw HttpError.internal(fetchErr.message);
     if (!full) throw HttpError.notFound("Product not found");
-    res.json(toProductDTO(full));
+    res.json(toProductDTO(full, { includeDisabledCustomizations: true }));
   } catch (err) {
     next(err);
   }
@@ -279,9 +285,175 @@ adminProductsRouter.patch(
       }
 
       const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", req.params.id).single();
-      res.json(toProductDTO(full));
+      res.json(toProductDTO(full, { includeDisabledCustomizations: true }));
     } catch (err) {
       next(err);
     }
   }
 );
+
+// ---- Customization engine: per-product option groups + values ----
+
+const customizationGroupSchema = z.object({
+  name: z.string().min(1),
+  label: z.string().min(1),
+  type: z.enum(["choice", "color", "text", "number", "checkbox"]),
+  required: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+  maxLength: z.number().int().min(1).max(1000).optional().nullable(),
+  placeholder: z.string().optional().nullable(),
+  defaultValue: z.string().optional().nullable(),
+  conditionalParentValueId: z.string().uuid().optional().nullable(),
+  templateId: z.string().uuid().optional().nullable(),
+});
+
+async function respondWithFullProduct(res: import("express").Response, productId: string) {
+  const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", productId).single();
+  res.json(toProductDTO(full, { includeDisabledCustomizations: true }));
+}
+
+adminProductsRouter.post(
+  "/:id/customizations",
+  validate(customizationGroupSchema),
+  async (req, res, next) => {
+    try {
+      const b = req.body as z.infer<typeof customizationGroupSchema>;
+      const { error } = await supabaseAdmin.from("product_customizations").insert({
+        product_id: req.params.id,
+        name: b.name,
+        label: b.label,
+        type: b.type,
+        required: b.required ?? false,
+        enabled: b.enabled ?? true,
+        sort_order: b.sortOrder ?? 0,
+        max_length: b.maxLength,
+        placeholder: b.placeholder,
+        default_value: b.defaultValue,
+        conditional_parent_value_id: b.conditionalParentValueId,
+        template_id: b.templateId,
+      });
+      if (error) throw HttpError.internal(error.message);
+      await respondWithFullProduct(res, req.params.id);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+adminProductsRouter.patch(
+  "/:id/customizations/:customizationId",
+  validate(customizationGroupSchema.partial()),
+  async (req, res, next) => {
+    try {
+      const b = req.body as Partial<z.infer<typeof customizationGroupSchema>>;
+      const patch: Record<string, unknown> = {};
+      if (b.name !== undefined) patch.name = b.name;
+      if (b.label !== undefined) patch.label = b.label;
+      if (b.type !== undefined) patch.type = b.type;
+      if (b.required !== undefined) patch.required = b.required;
+      if (b.enabled !== undefined) patch.enabled = b.enabled;
+      if (b.sortOrder !== undefined) patch.sort_order = b.sortOrder;
+      if (b.maxLength !== undefined) patch.max_length = b.maxLength;
+      if (b.placeholder !== undefined) patch.placeholder = b.placeholder;
+      if (b.defaultValue !== undefined) patch.default_value = b.defaultValue;
+      if (b.conditionalParentValueId !== undefined) patch.conditional_parent_value_id = b.conditionalParentValueId;
+
+      const { error } = await supabaseAdmin
+        .from("product_customizations")
+        .update(patch)
+        .eq("id", req.params.customizationId)
+        .eq("product_id", req.params.id);
+      if (error) throw HttpError.internal(error.message);
+      await respondWithFullProduct(res, req.params.id);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Deletion is always safe historically: orders/cart store a resolved JSON snapshot,
+// not a foreign key, so removing a group never corrupts past order data.
+adminProductsRouter.delete("/:id/customizations/:customizationId", async (req, res, next) => {
+  try {
+    const { error } = await supabaseAdmin
+      .from("product_customizations")
+      .delete()
+      .eq("id", req.params.customizationId)
+      .eq("product_id", req.params.id);
+    if (error) throw HttpError.internal(error.message);
+    await respondWithFullProduct(res, req.params.id);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const customizationValueSchema = z.object({
+  label: z.string().min(1),
+  value: z.string().min(1),
+  priceAdjustment: z.number().optional(),
+  sortOrder: z.number().int().optional(),
+  enabled: z.boolean().optional(),
+});
+
+adminProductsRouter.post(
+  "/:id/customizations/:customizationId/values",
+  validate(customizationValueSchema),
+  async (req, res, next) => {
+    try {
+      const b = req.body as z.infer<typeof customizationValueSchema>;
+      const { error } = await supabaseAdmin.from("customization_values").insert({
+        customization_id: req.params.customizationId,
+        label: b.label,
+        value: b.value,
+        price_adjustment: b.priceAdjustment ?? 0,
+        sort_order: b.sortOrder ?? 0,
+        enabled: b.enabled ?? true,
+      });
+      if (error) throw HttpError.internal(error.message);
+      await respondWithFullProduct(res, req.params.id);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+adminProductsRouter.patch(
+  "/:id/customizations/:customizationId/values/:valueId",
+  validate(customizationValueSchema.partial()),
+  async (req, res, next) => {
+    try {
+      const b = req.body as Partial<z.infer<typeof customizationValueSchema>>;
+      const patch: Record<string, unknown> = {};
+      if (b.label !== undefined) patch.label = b.label;
+      if (b.value !== undefined) patch.value = b.value;
+      if (b.priceAdjustment !== undefined) patch.price_adjustment = b.priceAdjustment;
+      if (b.sortOrder !== undefined) patch.sort_order = b.sortOrder;
+      if (b.enabled !== undefined) patch.enabled = b.enabled;
+
+      const { error } = await supabaseAdmin
+        .from("customization_values")
+        .update(patch)
+        .eq("id", req.params.valueId)
+        .eq("customization_id", req.params.customizationId);
+      if (error) throw HttpError.internal(error.message);
+      await respondWithFullProduct(res, req.params.id);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+adminProductsRouter.delete("/:id/customizations/:customizationId/values/:valueId", async (req, res, next) => {
+  try {
+    const { error } = await supabaseAdmin
+      .from("customization_values")
+      .delete()
+      .eq("id", req.params.valueId)
+      .eq("customization_id", req.params.customizationId);
+    if (error) throw HttpError.internal(error.message);
+    await respondWithFullProduct(res, req.params.id);
+  } catch (err) {
+    next(err);
+  }
+});

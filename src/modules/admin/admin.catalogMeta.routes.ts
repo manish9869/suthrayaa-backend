@@ -28,6 +28,7 @@ const categorySchema = z.object({
   imageUrl: z.string().optional(),
   sortOrder: z.number().int().optional(),
   isActive: z.boolean().optional(),
+  parentId: z.string().uuid().optional().nullable(),
 });
 
 adminCategoriesRouter.get("/", async (_req, res, next) => {
@@ -52,6 +53,7 @@ adminCategoriesRouter.post("/", validate(categorySchema), async (req, res, next)
         image_url: b.imageUrl,
         sort_order: b.sortOrder ?? 0,
         is_active: b.isActive ?? true,
+        parent_id: b.parentId ?? null,
       })
       .select("*")
       .single();
@@ -74,6 +76,7 @@ adminCategoriesRouter.patch("/:id", validate(categorySchema.partial()), async (r
         image_url: b.imageUrl,
         sort_order: b.sortOrder,
         is_active: b.isActive,
+        parent_id: b.parentId,
       })
       .eq("id", req.params.id)
       .select("*")

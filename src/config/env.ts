@@ -24,6 +24,12 @@ const envSchema = z.object({
   MSG91_AUTH_KEY: z.string().optional().default(""),
   MSG91_SENDER_ID: z.string().optional().default(""),
   MSG91_OTP_TEMPLATE_ID: z.string().optional().default(""),
+
+  // Transactional email via Gmail SMTP — GMAIL_APP_PASSWORD is a 16-char App Password
+  // (myaccount.google.com/apppasswords), not the account's login password.
+  GMAIL_USER: z.string().optional().default(""),
+  GMAIL_APP_PASSWORD: z.string().optional().default(""),
+  ADMIN_NOTIFICATION_EMAIL: z.string().optional().default("suthrayaa@gmail.com"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -38,3 +44,5 @@ export const env = parsed.data;
 export const isPhoneOtpConfigured = Boolean(
   env.MSG91_AUTH_KEY && env.MSG91_SENDER_ID && env.MSG91_OTP_TEMPLATE_ID
 );
+
+export const isEmailConfigured = Boolean(env.GMAIL_USER && env.GMAIL_APP_PASSWORD);

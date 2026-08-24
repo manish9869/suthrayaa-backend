@@ -4,27 +4,131 @@ import { supabaseAdmin } from "../../config/supabase.js";
 import { razorpay } from "../../config/razorpay.js";
 import { env } from "../../config/env.js";
 import { HttpError } from "../../lib/httpError.js";
+import { logger } from "../../lib/logger.js";
 import { PRODUCT_SELECT } from "../catalog/serializers.js";
+import { sendOrderConfirmationEmail, sendAdminOrderNotification } from "../email/email.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+export interface CustomizationSelectionInput {
+  customizationId: string;
+  valueId?: string;
+  textValue?: string;
+}
 
 export interface CartItemInput {
   productId: string;
   quantity: number;
   selectedColor?: string;
   customText?: string;
+  customizations?: CustomizationSelectionInput[];
+}
+
+export interface CustomizationSnapshot {
+  customizationId: string;
+  name: string;
+  label: string;
+  type: string;
+  valueId?: string;
+  valueLabel?: string;
+  value?: string;
+  textValue?: string;
+  priceAdjustment: number;
 }
 
 interface ValidatedLine {
   productId: string;
   name: string;
+  sku?: string | null;
   image?: string;
+  basePrice: number;
   unitPrice: number;
   quantity: number;
   selectedColorHex?: string;
   selectedColorName?: string;
   customText?: string;
+  customizations: CustomizationSnapshot[];
   lineTotal: number;
+}
+
+/**
+ * Resolves + validates a customer's customization selections against the product's
+ * CURRENT admin-configured groups/values, and returns a priced snapshot. This is the
+ * only place cart/order line prices are computed — the frontend's displayed total is
+ * never trusted. Throws HttpError on any invalid/disabled/missing-required selection.
+ */
+function resolveCustomizations(product: any, selections: CustomizationSelectionInput[]): {
+  snapshot: CustomizationSnapshot[];
+  priceAdjustmentTotal: number;
+} {
+  const groups: any[] = (product.product_customizations ?? []).filter((g: any) => g.enabled);
+  if (groups.length === 0) return { snapshot: [], priceAdjustmentTotal: 0 };
+
+  const selectionByGroupId = new Map(selections.map((s) => [s.customizationId, s]));
+  const selectedValueIds = new Set(selections.map((s) => s.valueId).filter(Boolean));
+
+  const snapshot: CustomizationSnapshot[] = [];
+  let priceAdjustmentTotal = 0;
+
+  for (const group of groups) {
+    // Conditional groups (e.g. "Enter Name", shown only when "Add Name: Yes" is picked)
+    // are skipped entirely — not required, and any submission for them is ignored —
+    // unless their trigger value was actually selected.
+    if (group.conditional_parent_value_id && !selectedValueIds.has(group.conditional_parent_value_id)) {
+      continue;
+    }
+
+    const selection = selectionByGroupId.get(group.id);
+    const enabledValues: any[] = (group.customization_values ?? []).filter((v: any) => v.enabled);
+
+    if (!selection) {
+      if (group.required) throw HttpError.badRequest(`Please choose ${group.label.toLowerCase()}`);
+      continue;
+    }
+
+    if (group.type === "text" || group.type === "number") {
+      const textValue = (selection.textValue ?? "").trim();
+      if (!textValue) {
+        if (group.required) throw HttpError.badRequest(`Please fill in ${group.label.toLowerCase()}`);
+        continue;
+      }
+      if (group.max_length && textValue.length > group.max_length) {
+        throw HttpError.badRequest(`${group.label} exceeds the ${group.max_length} character limit`);
+      }
+      if (group.type === "number" && Number.isNaN(Number(textValue))) {
+        throw HttpError.badRequest(`${group.label} must be a number`);
+      }
+      snapshot.push({
+        customizationId: group.id,
+        name: group.name,
+        label: group.label,
+        type: group.type,
+        textValue,
+        priceAdjustment: 0,
+      });
+      continue;
+    }
+
+    // choice / color / checkbox — a value from this product's own enabled values.
+    const value = enabledValues.find((v) => v.id === selection.valueId);
+    if (!value) {
+      throw HttpError.badRequest(`That option isn't available for "${group.label}" on this product`);
+    }
+    const priceAdjustment = Number(value.price_adjustment ?? 0);
+    priceAdjustmentTotal += priceAdjustment;
+    snapshot.push({
+      customizationId: group.id,
+      name: group.name,
+      label: group.label,
+      type: group.type,
+      valueId: value.id,
+      valueLabel: value.label,
+      value: value.value,
+      priceAdjustment,
+    });
+  }
+
+  return { snapshot, priceAdjustmentTotal: Math.round(priceAdjustmentTotal * 100) / 100 };
 }
 
 const SHIPPING_RATES: Record<string, number> = { standard: 60, express: 150 };
@@ -93,7 +197,12 @@ export async function validateAndPriceCart(
       selectedColorName = match?.name;
     }
 
-    const unitPrice = Number(product.price);
+    const basePrice = Number(product.price);
+    const { snapshot: customizations, priceAdjustmentTotal } = resolveCustomizations(
+      product,
+      item.customizations ?? []
+    );
+    const unitPrice = Math.round((basePrice + priceAdjustmentTotal) * 100) / 100;
     const primaryImage = (product.product_images ?? [])
       .slice()
       .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0]?.url;
@@ -101,12 +210,15 @@ export async function validateAndPriceCart(
     lines.push({
       productId: product.id,
       name: product.name,
+      sku: product.sku,
       image: primaryImage,
+      basePrice,
       unitPrice,
       quantity: item.quantity,
       selectedColorHex,
       selectedColorName,
       customText: item.customText,
+      customizations,
       lineTotal: Math.round(unitPrice * item.quantity * 100) / 100,
     });
   }
@@ -241,6 +353,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       selected_color_hex: l.selectedColorHex,
       selected_color_name: l.selectedColorName,
       custom_text: l.customText,
+      customizations: l.customizations,
       quantity: l.quantity,
       line_total: l.lineTotal,
     }))
@@ -259,6 +372,26 @@ export async function placeOrder(input: PlaceOrderInput) {
     }
     if (priced.coupon) await redeemCoupon(priced.coupon.id, order.id, input.customerId, priced.discount);
     if (input.customerId) await clearServerCart(input.customerId);
+
+    notifyOrderPlaced({
+      orderNumber: order.order_number,
+      paymentMethod: "cod",
+      subtotal: priced.subtotal,
+      discountAmount: priced.discount,
+      shippingCost: priced.shippingCost,
+      giftWrapCost: priced.giftWrapCost,
+      total: priced.total,
+      shippingAddress: input.shippingAddress,
+      items: priced.lines.map((l) => ({
+        name: l.name,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        lineTotal: l.lineTotal,
+        selectedColorName: l.selectedColorName,
+        customText: l.customText,
+      })),
+    });
+
     return { order, razorpayOrder: null };
   }
 
@@ -288,6 +421,38 @@ async function clearServerCart(customerId: string) {
   await supabaseAdmin.from("cart_items").delete().eq("customer_id", customerId);
 }
 
+interface NotifyOrderPlacedArgs {
+  orderNumber: string;
+  paymentMethod: string;
+  subtotal: number;
+  discountAmount: number;
+  shippingCost: number;
+  giftWrapCost: number;
+  total: number;
+  shippingAddress: any;
+  items: { name: string; quantity: number; unitPrice: number; lineTotal: number; selectedColorName?: string | null; customText?: string | null }[];
+}
+
+/** Fire-and-forget — email failures are logged internally and never block checkout. */
+function notifyOrderPlaced(args: NotifyOrderPlacedArgs) {
+  const payload = {
+    orderNumber: args.orderNumber,
+    customerName: `${args.shippingAddress.firstName} ${args.shippingAddress.lastName}`.trim(),
+    customerEmail: args.shippingAddress.email as string | undefined,
+    paymentMethod: args.paymentMethod,
+    subtotal: args.subtotal,
+    discountAmount: args.discountAmount,
+    shippingCost: args.shippingCost,
+    giftWrapCost: args.giftWrapCost,
+    total: args.total,
+    shippingAddress: args.shippingAddress,
+    items: args.items,
+  };
+  Promise.all([sendOrderConfirmationEmail(payload), sendAdminOrderNotification(payload)]).catch((err) =>
+    logger.error({ err, orderNumber: args.orderNumber }, "Order email notification failed")
+  );
+}
+
 export async function verifyRazorpayPayment(input: {
   razorpayOrderId: string;
   razorpayPaymentId: string;
@@ -311,7 +476,9 @@ export async function verifyRazorpayPayment(input: {
 export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, razorpayPaymentId?: string) {
   const { data: order } = await supabaseAdmin
     .from("orders")
-    .select("id, status, payment_status, customer_id, coupon_id, discount_amount")
+    .select(
+      "id, order_number, status, payment_status, payment_method, customer_id, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address"
+    )
     .eq("razorpay_order_id", razorpayOrderId)
     .maybeSingle();
 
@@ -320,7 +487,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
 
   const { data: items } = await supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity")
+    .select("product_id, quantity, product_name_snapshot, unit_price_snapshot, line_total, selected_color_name, custom_text")
     .eq("order_id", order.id);
 
   for (const item of items ?? []) {
@@ -349,6 +516,25 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
     await redeemCoupon(order.coupon_id, order.id, order.customer_id ?? undefined, Number(order.discount_amount));
   }
   if (order.customer_id) await clearServerCart(order.customer_id);
+
+  notifyOrderPlaced({
+    orderNumber: order.order_number,
+    paymentMethod: order.payment_method,
+    subtotal: Number(order.subtotal),
+    discountAmount: Number(order.discount_amount),
+    shippingCost: Number(order.shipping_cost),
+    giftWrapCost: Number(order.gift_wrap_cost),
+    total: Number(order.total),
+    shippingAddress: order.shipping_address,
+    items: (items ?? []).map((i) => ({
+      name: i.product_name_snapshot,
+      quantity: i.quantity,
+      unitPrice: Number(i.unit_price_snapshot),
+      lineTotal: Number(i.line_total),
+      selectedColorName: i.selected_color_name,
+      customText: i.custom_text,
+    })),
+  });
 
   return order;
 }
