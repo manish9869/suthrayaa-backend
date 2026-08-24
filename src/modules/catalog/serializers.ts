@@ -135,17 +135,14 @@ export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: b
     Boolean(opts.includeDisabledCustomizations)
   );
 
-  // "From ₹X" pricing on listing cards: lowest total across every required group's
-  // cheapest value (optional groups don't force a price increase by default).
+  // "From ₹X" pricing on listing cards: the true minimum a customer could pay — base
+  // price plus each REQUIRED group's cheapest value (optional groups don't force any
+  // increase, since skipping them is always allowed). Only surfaced when price can
+  // actually vary, so a plain non-customizable product just shows its normal price.
   const fromPriceAdjustment = customizations
-    .filter((c: any) => c.required)
-    .reduce((sum: number, c: any) => {
-      const cheapest = c.values.reduce(
-        (min: number, v: any) => Math.min(min, v.priceAdjustment),
-        0
-      );
-      return sum + Math.max(0, cheapest);
-    }, 0);
+    .filter((c: any) => c.required && c.values.length > 0)
+    .reduce((sum: number, c: any) => sum + Math.min(...c.values.map((v: any) => v.priceAdjustment)), 0);
+  const hasVariablePricing = customizations.some((c: any) => c.values.some((v: any) => v.priceAdjustment !== 0));
 
   return {
     id: row.id,
@@ -165,7 +162,7 @@ export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: b
     customizationOptions: toCustomizationOptionsDTO(row.customization_rules),
     customizable: Boolean(row.customizable),
     customizations,
-    fromPrice: customizations.length > 0 ? Number(row.price) + fromPriceAdjustment : undefined,
+    fromPrice: hasVariablePricing ? Number(row.price) + fromPriceAdjustment : undefined,
     stock: row.stock,
     featured: row.featured,
     bestseller: row.bestseller,
