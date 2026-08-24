@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx scripts/seed-from-legacy-data.ts"
+    "seed": "tsx scripts/seed-from-legacy-data.ts",
+    "setup:storage": "tsx scripts/setup-storage.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -27,7 +28,11 @@
     "pino-http": "^10.3.0",
     "razorpay": "^2.9.4",
     "sharp": "^0.33.5",
+    "ws": "^8.18.0",
     "zod": "^3.23.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["sharp", "esbuild"]
   },
   "devDependencies": {
     "@types/compression": "^1.7.5",
@@ -35,6 +40,7 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.12",
     "@types/node": "^20.16.10",
+    "@types/ws": "^8.5.12",
     "pino-pretty": "^11.2.2",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2"
