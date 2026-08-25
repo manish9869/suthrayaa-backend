@@ -588,6 +588,9 @@ function notifyOrderPlaced(args: NotifyOrderPlacedArgs) {
         order_total: formatPrice(payload.total),
         store_name: "Suthrayaa",
         invoice_number: invoice.invoice_number,
+        item_count: String(payload.items.reduce((s, i) => s + i.quantity, 0)),
+        order_url: `${env.FRONTEND_URL}/order-confirmation?order=${payload.orderNumber}`,
+        ...storeLinkVariables(),
       },
       rawVariables: {
         items_table: renderOrderDetailsHtml(payload),
@@ -693,6 +696,8 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
         order_number: order.order_number,
         order_total: formatPrice(Number(order.total)),
         store_name: "Suthrayaa",
+        order_url: `${env.FRONTEND_URL}/order-confirmation?order=${order.order_number}`,
+        ...storeLinkVariables(),
       },
       relatedOrderId: order.id,
     }).catch((err) => logger.error({ err, orderId: order.id }, "payment_successful email failed"));
@@ -725,7 +730,14 @@ export async function markOrderFailedByRazorpayOrderId(razorpayOrderId: string) 
     sendTemplatedEmail({
       type: "payment_failed",
       to: customerEmail,
-      variables: { customer_name: customerName, order_number: order.order_number, order_total: orderTotal, store_name: "Suthrayaa" },
+      variables: {
+        customer_name: customerName,
+        order_number: order.order_number,
+        order_total: orderTotal,
+        store_name: "Suthrayaa",
+        order_url: `${env.FRONTEND_URL}/order-confirmation?order=${order.order_number}`,
+        ...storeLinkVariables(),
+      },
       relatedOrderId: order.id,
     }).catch((err) => logger.error({ err, orderId: order.id }, "payment_failed email failed"));
   }

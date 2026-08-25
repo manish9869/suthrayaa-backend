@@ -8,7 +8,7 @@ import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logAudit } from "../rbac/audit.service.js";
-import { sendTemplatedEmail, ORDER_EMAIL_TYPES } from "../email/email.service.js";
+import { sendTemplatedEmail, ORDER_EMAIL_TYPES, storeLinkVariables } from "../email/email.service.js";
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 import { env } from "../../config/env.js";
@@ -172,6 +172,8 @@ function buildOrderEmailData(order: any) {
     contact_url: `${env.FRONTEND_URL}/contact`,
     instagram_url: instagramUrl,
     facebook_url: facebookUrl,
+    refund_status: order.payment_status === "refunded" ? "Refunded" : "",
+    refund_amount: order.payment_status === "refunded" ? formatPrice(Number(order.total)) : "",
     current_year: String(new Date().getFullYear()),
   };
 
@@ -400,8 +402,11 @@ adminOrdersRouter.post("/:id/invoice/email", requirePermission("orders.update"),
       variables: {
         customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
         order_number: order.order_number,
+        order_total: formatPrice(Number(order.total)),
         invoice_number: invoice.invoice_number,
         store_name: "Suthrayaa",
+        order_url: `${env.FRONTEND_URL}/order-confirmation?order=${order.order_number}`,
+        ...storeLinkVariables(),
       },
       relatedOrderId: order.id,
       attachments: [{ filename: `${invoice.invoice_number}.pdf`, content: pdf }],
