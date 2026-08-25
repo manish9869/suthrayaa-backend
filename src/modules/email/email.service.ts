@@ -43,23 +43,32 @@ interface OrderEmailPayload {
   items: OrderEmailItem[];
 }
 
-// Brand tokens — mirrors app/globals.css's warm terracotta/cream palette. Email clients
-// can't read CSS custom properties, so these are the same values inlined by hand.
+// Brand tokens — mirrors the pink/lavender "handmade with love" theme introduced in
+// templates/custom_order_confirmation.html. Email clients can't read CSS custom properties,
+// so these are the same values inlined by hand, shared by every hand-built email in this file
+// and used as the outer shell for every admin-editable template (see wrapEmail below).
 const BRAND = {
-  pageBg: "#f1e9d8",
-  card: "#fffdf9",
-  cardAlt: "#fbf6ee",
-  ink: "#3a2420",
-  muted: "#8a7a63",
-  border: "#e8dcc4",
-  primary: "#c1502e",
-  primaryDark: "#a8431f",
-  gold: "#d8a13b",
-  sage: "#7c9473",
-  mint: "#a9c9a0",
-  mintInk: "#22391f",
-  destructive: "#d64545",
-  peach: "#f6ddc9",
+  pageBg: "#FFF7F9",
+  card: "#FFFFFF",
+  cardAlt: "#FFFAFD",
+  ink: "#3D2B35",
+  muted: "#8F7A85",
+  border: "#F1E5EB",
+  primary: "#D96C8A",
+  primaryDark: "#C55376",
+  lavender: "#A77BCA",
+  lavenderDark: "#936BB2",
+  gold: "#C28A3E",
+  sage: "#64957D",
+  sageDark: "#579274",
+  peach: "#FFF4F7",
+  highlightBg: "#F7F1FC",
+  highlightBorder: "#EADFF3",
+  footerBg: "#3D2B35",
+  footerHeading: "#F8E8EE",
+  footerMuted: "#BDAAB2",
+  footerLink: "#E3B9C7",
+  footerFaint: "#82717A",
 };
 
 const LOGO_URL =
@@ -67,10 +76,10 @@ const LOGO_URL =
 
 type BadgeTone = "good" | "warning" | "critical" | "neutral";
 const BADGE_TONE_COLORS: Record<BadgeTone, { bg: string; border: string; fg: string }> = {
-  good: { bg: "rgba(169,201,160,0.28)", border: "rgba(124,148,115,0.5)", fg: "#22391f" },
-  warning: { bg: "rgba(216,161,59,0.2)", border: "rgba(216,161,59,0.5)", fg: "#5c3a1e" },
-  critical: { bg: "rgba(214,69,69,0.14)", border: "rgba(214,69,69,0.45)", fg: "#a8341f" },
-  neutral: { bg: "rgba(138,122,99,0.14)", border: "rgba(138,122,99,0.35)", fg: "#5c4f3d" },
+  good: { bg: "#FFE4EC", border: "#F3B6C9", fg: "#C55376" },
+  warning: { bg: "#FFF0D8", border: "#F0D09B", fg: "#8A5A1E" },
+  critical: { bg: "#FCE8EA", border: "#F0C7CC", fg: "#B23A4A" },
+  neutral: { bg: "#F7F1FC", border: "#EADFF3", fg: "#936BB2" },
 };
 
 function itemsRows(items: OrderEmailItem[]) {
@@ -118,9 +127,9 @@ export function renderOrderDetailsHtml(payload: OrderEmailPayload) {
       ${itemsRows(payload.items)}
       ${summaryRows(payload)}
       <tr>
-        <td style="padding:16px 20px;background:rgba(193,80,46,0.07);border-top:1px solid rgba(193,80,46,0.18);font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${BRAND.muted};vertical-align:middle;">Total</td>
-        <td style="padding:16px 20px;background:rgba(193,80,46,0.07);border-top:1px solid rgba(193,80,46,0.18);text-align:right;vertical-align:middle;">
-          <span style="font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:700;color:${BRAND.primary};">${formatPrice(payload.total)}</span>
+        <td style="padding:16px 20px;background:#FFE8EF;border-top:1px solid #F4D2DC;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${BRAND.primaryDark};vertical-align:middle;">Total</td>
+        <td style="padding:16px 20px;background:#FFE8EF;border-top:1px solid #F4D2DC;text-align:right;vertical-align:middle;">
+          <span style="font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;color:#D05F80;">${formatPrice(payload.total)}</span>
         </td>
       </tr>
     </table>`;
@@ -150,17 +159,17 @@ export function wrapEmail(
     ? (() => {
         const c = BADGE_TONE_COLORS[options.badge!.tone ?? "neutral"];
         return `
-        <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 16px;">
-          <tr><td align="center" style="background:${c.bg};border:1px solid ${c.border};border-radius:100px;padding:6px 18px;font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${c.fg};">${options.badge!.label}</td></tr>
+        <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 18px;">
+          <tr><td align="center" style="background:${c.bg};border:1px solid ${c.border};border-radius:100px;padding:8px 18px;font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${c.fg};">${options.badge!.label}</td></tr>
         </table>`;
       })()
     : "";
 
   const highlightHtml = options.highlight
     ? `
-      <tr><td style="background:rgba(193,80,46,0.06);border-top:1px solid rgba(193,80,46,0.14);border-bottom:1px solid rgba(193,80,46,0.14);padding:16px 32px;text-align:center;">
-        <p style="margin:0 0 4px;font-family:Arial,Helvetica,sans-serif;font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:${BRAND.muted};">${options.highlight.label}</p>
-        <p style="margin:0;font-family:'Courier New',Courier,monospace;font-size:18px;font-weight:700;color:${BRAND.primary};letter-spacing:1.5px;">${options.highlight.value}</p>
+      <tr><td align="center" style="background:${BRAND.highlightBg};border-top:1px solid ${BRAND.highlightBorder};border-bottom:1px solid ${BRAND.highlightBorder};padding:19px 30px;">
+        <p style="margin:0 0 5px;font-family:Arial,Helvetica,sans-serif;font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9A88A5;">${options.highlight.label}</p>
+        <p style="margin:0;font-family:'Courier New',Courier,monospace;font-size:18px;font-weight:700;color:${BRAND.lavenderDark};letter-spacing:1.5px;">${options.highlight.value}</p>
       </td></tr>`
     : "";
 
@@ -173,32 +182,34 @@ export function wrapEmail(
   <body style="margin:0;padding:0;background:${BRAND.pageBg};font-family:Arial,Helvetica,sans-serif;color:${BRAND.ink};">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.pageBg};padding:32px 16px;">
       <tr><td align="center">
-        <table role="presentation" width="580" cellpadding="0" cellspacing="0" style="max-width:580px;width:100%;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:${BRAND.card};border-radius:20px;overflow:hidden;border:1px solid ${BRAND.border};">
 
-          <tr><td height="4" style="background:linear-gradient(90deg,${BRAND.primary} 0%,${BRAND.gold} 50%,${BRAND.primary} 100%);border-radius:6px 6px 0 0;font-size:1px;line-height:1px;">&nbsp;</td></tr>
+          <tr><td height="6" style="background:${BRAND.primary};font-size:1px;line-height:1px;">&nbsp;</td></tr>
 
-          <tr><td style="background:linear-gradient(160deg,${BRAND.card} 0%,${BRAND.peach} 100%);border-left:1px solid ${BRAND.border};border-right:1px solid ${BRAND.border};padding:36px 32px 30px;text-align:center;">
-            <img src="${LOGO_URL}" alt="Suthrayaa" width="110" style="width:110px;height:auto;margin:0 auto 22px;display:block;"/>
+          <tr><td style="background:${BRAND.peach};padding:34px 32px 30px;text-align:center;">
+            <p style="margin:0 0 12px;color:${BRAND.lavender};font-size:14px;letter-spacing:7px;">✦ ✧ ✦</p>
+            <img src="${LOGO_URL}" alt="Suthrayaa" width="120" style="width:120px;max-width:120px;height:auto;margin:0 auto 20px;display:block;"/>
             ${badgeHtml}
-            <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:23px;font-weight:700;color:${BRAND.ink};line-height:1.35;">${title}</h1>
+            <h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:${BRAND.ink};line-height:1.35;letter-spacing:-0.3px;">${title}</h1>
           </td></tr>
 
           ${highlightHtml}
 
-          <tr><td style="background:${BRAND.card};border-left:1px solid ${BRAND.border};border-right:1px solid ${BRAND.border};padding:30px 32px;">
+          <tr><td style="background:${BRAND.card};padding:30px 32px;">
             ${bodyHtml}
           </td></tr>
 
-          <tr><td style="background:rgba(124,148,115,0.08);border-left:1px solid ${BRAND.border};border-right:1px solid ${BRAND.border};border-top:1px solid rgba(124,148,115,0.18);padding:12px 32px;text-align:center;">
-            <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${BRAND.sage};">&#10003;&nbsp;&nbsp;Handmade in small batches &middot; Secure checkout &middot; Suthrayaa</p>
+          <tr><td align="center" style="background:#FFF0F4;border-top:1px solid #F4DFE7;border-bottom:1px solid #F4DFE7;padding:16px 25px;">
+            <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:${BRAND.primaryDark};">Made with love, just for you 💕</p>
           </td></tr>
 
-          <tr><td style="background:${BRAND.cardAlt};border:1px solid ${BRAND.border};border-top:none;border-radius:0 0 12px 12px;padding:22px 32px;text-align:center;">
-            <p style="margin:0 0 4px;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:700;color:${BRAND.ink};">Suthrayaa</p>
-            <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${BRAND.muted};">Handcrafted with love, made just for you</p>
+          <tr><td align="center" style="background:${BRAND.footerBg};padding:28px 32px;">
+            <img src="${LOGO_URL}" alt="Suthrayaa" width="56" style="width:56px;max-width:56px;height:auto;margin:0 auto 12px;display:block;"/>
+            <p style="margin:0 0 6px;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:700;color:${BRAND.footerHeading};">Suthrayaa</p>
+            <p style="margin:0 0 14px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${BRAND.footerMuted};">Handcrafted with love, made just for you</p>
+            <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:10px;"><a href="${env.FRONTEND_URL}" target="_blank" style="color:${BRAND.footerLink};text-decoration:none;">Shop</a></p>
+            <p style="margin:14px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:9px;color:${BRAND.footerFaint};">© ${new Date().getFullYear()} Suthrayaa. All rights reserved.</p>
           </td></tr>
-
-          <tr><td height="4" style="background:linear-gradient(90deg,transparent 0%,${BRAND.gold} 50%,transparent 100%);font-size:1px;line-height:1px;">&nbsp;</td></tr>
 
         </table>
       </td></tr>
@@ -283,24 +294,40 @@ function isTruthy(variables: Record<string, string>, key: string): boolean {
   return Boolean(v) && v !== "false" && v !== "0";
 }
 
-/** {{variables}} are HTML-escaped (may contain customer-supplied text); rawVariables are
- * trusted, already-safe HTML built server-side (e.g. an items table) and inserted as-is.
- * {{#if flag}}...{{else}}...{{/if}} blocks (no nesting) let a single template branch on a
- * boolean-ish variable — e.g. showing a tracking number only once one exists. */
-export function substituteTemplate(
-  template: string,
-  variables: Record<string, string>,
-  rawVariables: Record<string, string> = {}
-): string {
-  const withConditionals = template.replace(
+function substituteConditionals(str: string, variables: Record<string, string>): string {
+  return str.replace(
     /\{\{#if (\w+)\}\}([\s\S]*?)(?:\{\{else\}\}([\s\S]*?))?\{\{\/if\}\}/g,
     (_match, key: string, whenTrue: string, whenFalse = "") => (isTruthy(variables, key) ? whenTrue : whenFalse)
   );
-  return withConditionals.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
+}
+
+function substituteVars(str: string, variables: Record<string, string>, rawVariables: Record<string, string>): string {
+  return str.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
     if (key in rawVariables) return rawVariables[key];
     if (key in variables) return escapeHtml(variables[key]);
     return match;
   });
+}
+
+/** {{variables}} are HTML-escaped (may contain customer-supplied text); rawVariables are
+ * trusted, already-safe HTML built server-side (e.g. an items table) and inserted as-is.
+ * {{#if flag}}...{{else}}...{{/if}} blocks (no nesting) let a single template branch on a
+ * boolean-ish variable — e.g. showing a tracking number only once one exists.
+ * {{#each listKey}}...{{/each}} repeats its block once per row in `listVariables[listKey]`,
+ * with {{#if}}/{{var}} inside the block resolved against that row's own fields (e.g. looping
+ * order line items with a per-item product image, quantity, and price). */
+export function substituteTemplate(
+  template: string,
+  variables: Record<string, string>,
+  rawVariables: Record<string, string> = {},
+  listVariables: Record<string, Array<Record<string, string>>> = {}
+): string {
+  const withEach = template.replace(/\{\{#each (\w+)\}\}([\s\S]*?)\{\{\/each\}\}/g, (_match, key: string, block: string) => {
+    const rows = listVariables[key] ?? [];
+    return rows.map((row) => substituteVars(substituteConditionals(block, row), row, {})).join("");
+  });
+  const withConditionals = substituteConditionals(withEach, variables);
+  return substituteVars(withConditionals, variables, rawVariables);
 }
 
 // Auto-derives a status pill for each admin-editable template type — so every order/payment
@@ -324,6 +351,19 @@ const EMAIL_TYPE_BADGE: Record<string, { label: string; tone: BadgeTone }> = {
   admin_new_enquiry: { label: "New Enquiry", tone: "neutral" },
   admin_payment_failed: { label: "Payment Failed", tone: "critical" },
 };
+
+/** Renders a template's already-substituted subject/body into the final email HTML — wrapping
+ * bare body fragments in the shared branded shell, or passing a full standalone document (like
+ * custom_order_confirmation.html) through untouched so its own chrome isn't nested inside a
+ * second one. Shared by the real send path and the admin's "send test email" action so a test
+ * send actually looks like the email a customer would receive. */
+export function renderFinalEmailHtml(type: string, subject: string, bodyHtml: string, orderNumber?: string): string {
+  if (/^\s*<!doctype html/i.test(bodyHtml)) return bodyHtml;
+  return wrapEmail(subject, bodyHtml, {
+    badge: EMAIL_TYPE_BADGE[type],
+    highlight: orderNumber ? { label: "Order Number", value: orderNumber } : undefined,
+  });
+}
 
 /** Order-lifecycle types selectable in the admin's manual "Send Email" action on an order —
  * every type that takes the standard order variable set (customer_name, order_number,
@@ -350,6 +390,7 @@ export interface TemplatedEmailInput {
   to: string;
   variables: Record<string, string>;
   rawVariables?: Record<string, string>;
+  listVariables?: Record<string, Array<Record<string, string>>>;
   relatedOrderId?: string;
   attachments?: { filename: string; content: Buffer }[];
 }
@@ -366,12 +407,8 @@ export async function sendTemplatedEmail(input: TemplatedEmailInput) {
     if (!template || !template.enabled) return;
 
     const subject = substituteTemplate(template.subject, input.variables, input.rawVariables);
-    const bodyHtml = substituteTemplate(template.body_html, input.variables, input.rawVariables);
-    const orderNumber = input.variables.order_number;
-    const html = wrapEmail(subject, bodyHtml, {
-      badge: EMAIL_TYPE_BADGE[input.type],
-      highlight: orderNumber ? { label: "Order Number", value: orderNumber } : undefined,
-    });
+    const bodyHtml = substituteTemplate(template.body_html, input.variables, input.rawVariables, input.listVariables);
+    const html = renderFinalEmailHtml(input.type, subject, bodyHtml, input.variables.order_number);
 
     if (!transporter) {
       logger.warn({ to: input.to, type: input.type }, "[dummy] Templated email not sent — email not configured yet");

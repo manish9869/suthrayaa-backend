@@ -11,6 +11,8 @@ import { logAudit } from "../rbac/audit.service.js";
 import { sendTemplatedEmail, ORDER_EMAIL_TYPES } from "../email/email.service.js";
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
+import { env } from "../../config/env.js";
+import { getSettingSync } from "../settings/settings.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -124,6 +126,70 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
   }
 });
 
+/** Builds the full variable set every order-lifecycle email template can draw from — the
+ * "standard" fields (customer_name, order_number, ...) plus everything the richer
+ * custom_order_confirmation template needs (line items, payment/shipping detail, store links).
+ * Templates that don't reference a given {{var}} simply ignore it, so one comprehensive set
+ * is passed regardless of which template type is actually being sent. */
+function buildOrderEmailData(order: any) {
+  const items = (order.order_items ?? []) as any[];
+  const addr = order.shipping_address ?? {};
+  const itemCount = items.reduce((s, i) => s + i.quantity, 0);
+  const discountAmount = Number(order.discount_amount ?? 0);
+  const taxAmount = Number(order.tax_amount ?? 0);
+
+  const instagramUrl = getSettingSync<boolean>("social.instagram_enabled") ? getSettingSync<string>("social.instagram_url") : "";
+  const facebookUrl = getSettingSync<boolean>("social.facebook_enabled") ? getSettingSync<string>("social.facebook_url") : "";
+
+  const variables: Record<string, string> = {
+    customer_name: addr.firstName ? `${addr.firstName} ${addr.lastName ?? ""}`.trim() : "there",
+    order_number: order.order_number,
+    order_total: formatPrice(Number(order.total)),
+    tracking_number: order.tracking_number ?? "",
+    store_name: getSettingSync<string>("store.name"),
+    item_count: String(itemCount),
+    subtotal: formatPrice(Number(order.subtotal)),
+    has_discount: String(discountAmount > 0),
+    discount: formatPrice(discountAmount),
+    coupon_code: order.coupons?.code ?? "",
+    shipping: formatPrice(Number(order.shipping_cost ?? 0)),
+    has_tax: String(taxAmount > 0),
+    tax: formatPrice(taxAmount),
+    total: formatPrice(Number(order.total)),
+    payment_status: order.payment_status === "paid" ? "Paid" : order.payment_status === "refunded" ? "Refunded" : order.payment_status === "failed" ? "Failed" : "Pending",
+    payment_method: order.payment_method === "cod" ? "Cash on Delivery" : "Online Payment",
+    shipping_name: addr.firstName ? `${addr.firstName} ${addr.lastName ?? ""}`.trim() : "",
+    shipping_address_line1: addr.addressLine1 ?? "",
+    shipping_address_line2: addr.addressLine2 ?? "",
+    shipping_city: addr.city ?? "",
+    shipping_state: addr.state ?? "",
+    shipping_pincode: addr.pincode ?? "",
+    shipping_country: addr.country ?? getSettingSync<string>("store.country"),
+    shipping_phone: addr.phone ?? "",
+    order_url: `${env.FRONTEND_URL}/order-confirmation?order=${order.order_number}`,
+    store_url: env.FRONTEND_URL,
+    support_url: `${env.FRONTEND_URL}/faqs`,
+    contact_url: `${env.FRONTEND_URL}/contact`,
+    instagram_url: instagramUrl,
+    facebook_url: facebookUrl,
+    current_year: String(new Date().getFullYear()),
+  };
+
+  const listVariables = {
+    order_items: items.map((i: any) => ({
+      product_image: i.product_image_snapshot ?? "",
+      product_name: i.product_name_snapshot,
+      variant_name: i.selected_color_name ?? "",
+      quantity: String(i.quantity),
+      item_total: formatPrice(Number(i.line_total)),
+      has_discount: "false",
+      original_item_total: "",
+    })),
+  };
+
+  return { variables, listVariables };
+}
+
 const ORDER_STATUSES = ["pending_payment", "confirmed", "in_production", "ready", "shipped", "delivered", "cancelled", "refunded", "partially_refunded"] as const;
 
 // Templates to fire when an order moves into each status — "New"/pending_payment and
@@ -161,7 +227,7 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
       .from("orders")
       .update(update)
       .eq("id", req.params.id)
-      .select("*")
+      .select("*, order_items(*), coupons(code)")
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!order) throw HttpError.notFound("Order not found");
@@ -192,16 +258,12 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
     const emailType = STATUS_EMAIL_TYPE[body.status];
     const customerEmail = order.guest_email ?? order.shipping_address?.email;
     if (emailType && customerEmail) {
+      const { variables, listVariables } = buildOrderEmailData(order);
       sendTemplatedEmail({
         type: emailType,
         to: customerEmail,
-        variables: {
-          customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
-          order_number: order.order_number,
-          order_total: formatPrice(Number(order.total)),
-          tracking_number: order.tracking_number ?? "",
-          store_name: "Suthrayaa",
-        },
+        variables,
+        listVariables,
         relatedOrderId: order.id,
       }).catch(() => {});
 
@@ -209,12 +271,8 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
         sendTemplatedEmail({
           type: "refund_processed",
           to: customerEmail,
-          variables: {
-            customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
-            order_number: order.order_number,
-            order_total: formatPrice(Number(order.total)),
-            store_name: "Suthrayaa",
-          },
+          variables,
+          listVariables,
           relatedOrderId: order.id,
         }).catch(() => {});
       }
@@ -258,22 +316,22 @@ const sendEmailSchema = z.object({ type: z.enum(ORDER_EMAIL_TYPES) });
 adminOrdersRouter.post("/:id/send-email", requirePermission("orders.update"), validate(sendEmailSchema), async (req, res, next) => {
   try {
     const { type } = req.body as z.infer<typeof sendEmailSchema>;
-    const { data: order } = await supabaseAdmin.from("orders").select("*").eq("id", req.params.id).single();
+    const { data: order } = await supabaseAdmin
+      .from("orders")
+      .select("*, order_items(*), coupons(code)")
+      .eq("id", req.params.id)
+      .single();
     if (!order) throw HttpError.notFound("Order not found");
 
     const to = order.guest_email ?? order.shipping_address?.email;
     if (!to) throw HttpError.badRequest("This order has no email address on file");
 
+    const { variables, listVariables } = buildOrderEmailData(order);
     await sendTemplatedEmail({
       type,
       to,
-      variables: {
-        customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
-        order_number: order.order_number,
-        order_total: formatPrice(Number(order.total)),
-        tracking_number: order.tracking_number ?? "",
-        store_name: "Suthrayaa",
-      },
+      variables,
+      listVariables,
       relatedOrderId: order.id,
     });
     res.json({ ok: true });

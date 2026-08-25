@@ -6,7 +6,7 @@ import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
-import { substituteTemplate, resendLoggedEmail } from "../email/email.service.js";
+import { substituteTemplate, resendLoggedEmail, renderFinalEmailHtml } from "../email/email.service.js";
 
 export const adminEmailTemplatesRouter = Router();
 export const adminEmailLogsRouter = Router();
@@ -14,6 +14,7 @@ for (const r of [adminEmailTemplatesRouter, adminEmailLogsRouter]) r.use(authent
 
 const SAMPLE_VARIABLES: Record<string, string> = {
   customer_name: "Priya Sharma",
+  customer_email: "priya.sharma@example.com",
   order_number: "ORD-2026-0042",
   order_date: new Date().toLocaleDateString("en-IN"),
   order_total: "₹1,499",
@@ -21,10 +22,59 @@ const SAMPLE_VARIABLES: Record<string, string> = {
   product_name: "Crochet Sunflower Pot",
   invoice_number: "INV-2026-0042",
   store_name: "Suthrayaa",
+  enquiry_message: "Hi! Do you ship the crochet sunflower pot outside India?",
+  item_count: "2",
+  subtotal: "₹1,598",
+  has_discount: "true",
+  discount: "₹99",
+  coupon_code: "WELCOME10",
+  shipping: "₹0",
+  has_tax: "false",
+  tax: "₹0",
+  total: "₹1,499",
+  payment_status: "Paid",
+  payment_method: "Online Payment",
+  shipping_name: "Priya Sharma",
+  shipping_address_line1: "12 Lotus Apartments, MG Road",
+  shipping_address_line2: "Near City Mall",
+  shipping_city: "Pune",
+  shipping_state: "Maharashtra",
+  shipping_pincode: "411001",
+  shipping_country: "India",
+  shipping_phone: "+91 98765 43210",
+  order_url: "https://suthrayaa.com/order-confirmation?order=ORD-2026-0042",
+  store_url: "https://suthrayaa.com",
+  support_url: "https://suthrayaa.com/faqs",
+  contact_url: "https://suthrayaa.com/contact",
+  instagram_url: "https://instagram.com/suthrayaa",
+  facebook_url: "https://facebook.com/suthrayaa",
+  current_year: String(new Date().getFullYear()),
 };
 const SAMPLE_RAW: Record<string, string> = {
   items_table: "<p style=\"color:#999;font-style:italic;\">[Order items table renders here]</p>",
   address_block: "<p style=\"color:#999;font-style:italic;\">[Shipping address renders here]</p>",
+};
+const SAMPLE_LISTS: Record<string, Array<Record<string, string>>> = {
+  order_items: [
+    {
+      product_image: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Suthraya%20Logo%20-%20Trans-HgT4V8esTeOZ2PwWy5B7QcPjLLrahf.png",
+      product_name: "Crochet Sunflower Pot",
+      variant_name: "Yellow",
+      quantity: "1",
+      item_total: "₹899",
+      has_discount: "false",
+      original_item_total: "",
+    },
+    {
+      product_image: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Suthraya%20Logo%20-%20Trans-HgT4V8esTeOZ2PwWy5B7QcPjLLrahf.png",
+      product_name: "Mini Amigurumi Bear",
+      variant_name: "",
+      quantity: "1",
+      item_total: "₹699",
+      has_discount: "true",
+      original_item_total: "₹799",
+    },
+  ],
 };
 
 function toTemplateDTO(row: any) {
@@ -76,8 +126,8 @@ adminEmailTemplatesRouter.post("/:id/preview", requirePermission("emails.view"),
     const { data: template } = await supabaseAdmin.from("email_templates").select("*").eq("id", req.params.id).maybeSingle();
     if (!template) throw HttpError.notFound("Template not found");
     res.json({
-      subject: substituteTemplate(template.subject, SAMPLE_VARIABLES, SAMPLE_RAW),
-      bodyHtml: substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW),
+      subject: substituteTemplate(template.subject, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS),
+      bodyHtml: substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS),
     });
   } catch (err) {
     next(err);
@@ -91,9 +141,10 @@ adminEmailTemplatesRouter.post("/:id/test-send", requirePermission("emails.updat
     const { data: template } = await supabaseAdmin.from("email_templates").select("*").eq("id", req.params.id).maybeSingle();
     if (!template) throw HttpError.notFound("Template not found");
 
-    const subject = `[TEST] ${substituteTemplate(template.subject, SAMPLE_VARIABLES, SAMPLE_RAW)}`;
-    const bodyHtml = substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW);
-    await resendLoggedEmail(to, subject, bodyHtml);
+    const renderedSubject = substituteTemplate(template.subject, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS);
+    const bodyHtml = substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS);
+    const html = renderFinalEmailHtml(template.type, renderedSubject, bodyHtml, SAMPLE_VARIABLES.order_number);
+    await resendLoggedEmail(to, `[TEST] ${renderedSubject}`, html);
     res.json({ ok: true });
   } catch (err) {
     next(err);
