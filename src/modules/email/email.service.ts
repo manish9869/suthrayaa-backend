@@ -74,6 +74,10 @@ const BRAND = {
 
 const LOGO_URL =
   "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Suthraya%20Logo%20-%20Trans-HgT4V8esTeOZ2PwWy5B7QcPjLLrahf.png";
+// A pre-rendered white silhouette of the same logo (RGB forced white, alpha preserved) for use
+// on the dark footer — CSS filter:invert isn't supported by Gmail/most email clients.
+const LOGO_URL_WHITE =
+  "https://uvctijaxxvddtzuqivse.supabase.co/storage/v1/object/public/hero-media/branding/suthrayaa-logo-white.png";
 
 type BadgeTone = "good" | "warning" | "critical" | "neutral";
 const BADGE_TONE_COLORS: Record<BadgeTone, { bg: string; border: string; fg: string }> = {
@@ -205,7 +209,7 @@ export function wrapEmail(
           </td></tr>
 
           <tr><td align="center" style="background:${BRAND.footerBg};padding:28px 32px;">
-            <img src="${LOGO_URL}" alt="Suthrayaa" width="56" style="width:56px;max-width:56px;height:auto;margin:0 auto 12px;display:block;filter:brightness(0) invert(1);"/>
+            <img src="${LOGO_URL_WHITE}" alt="Suthrayaa" width="80" style="width:80px;max-width:80px;height:auto;margin:0 auto 12px;display:block;"/>
             <p style="margin:0 0 6px;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:700;color:${BRAND.footerHeading};">Suthrayaa</p>
             <p style="margin:0 0 14px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${BRAND.footerMuted};">Handcrafted with love, made just for you</p>
             <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:10px;"><a href="${env.FRONTEND_URL}" target="_blank" style="color:${BRAND.footerLink};text-decoration:none;">Shop</a></p>
@@ -492,37 +496,20 @@ interface ContactMessagePayload {
 export async function sendContactFormEmails(payload: ContactMessagePayload) {
   const safeSubject = payload.subject?.trim() || "General enquiry";
   const messageHtml = escapeHtml(payload.message).replace(/\n/g, "<br/>");
-
-  const customerHtml = wrapEmail(
-    `Thanks for reaching out, ${payload.name.split(" ")[0]}!`,
-    `
-    <p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:${BRAND.muted};margin:0 0 20px;line-height:1.6;">
-      We've received your message and will get back to you within 1-2 business days.
-    </p>
-    <h2 style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${BRAND.muted};margin:0 0 10px;">Your message</h2>
-    <p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:${BRAND.ink};background:${BRAND.cardAlt};border:1px solid ${BRAND.border};border-radius:12px;padding:16px 20px;margin:0;line-height:1.6;">
-      <strong>${escapeHtml(safeSubject)}</strong><br/><br/>${messageHtml}
-    </p>
-    `,
-    { badge: { label: "Message Received", tone: "good" } }
-  );
-
-  const adminHtml = wrapEmail(
-    `New contact form message`,
-    `
-    <p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;margin:0 0 16px;color:${BRAND.ink};">
-      <strong>${escapeHtml(payload.name)}</strong> &middot;
-      <a href="mailto:${escapeHtml(payload.email)}" style="color:${BRAND.primary};">${escapeHtml(payload.email)}</a>
-    </p>
-    <h2 style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${BRAND.muted};margin:0 0 10px;">${escapeHtml(safeSubject)}</h2>
-    <p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:${BRAND.ink};background:${BRAND.cardAlt};border:1px solid ${BRAND.border};border-radius:12px;padding:16px 20px;margin:0;line-height:1.6;">
-      ${messageHtml}
-    </p>
-    `
-  );
+  const enquiryMessageHtml = `<strong>${escapeHtml(safeSubject)}</strong><br/><br/>${messageHtml}`;
 
   await Promise.all([
-    send(payload.email, "We've got your message — Suthrayaa", customerHtml),
+    sendTemplatedEmail({
+      type: "contact_enquiry_ack",
+      to: payload.email,
+      variables: {
+        customer_name: payload.name,
+        ...storeLinkVariables(),
+      },
+      rawVariables: {
+        enquiry_message: enquiryMessageHtml,
+      },
+    }),
     env.ADMIN_NOTIFICATION_EMAIL
       ? sendTemplatedEmail({
           type: "admin_new_enquiry",
@@ -533,7 +520,7 @@ export async function sendContactFormEmails(payload: ContactMessagePayload) {
             ...storeLinkVariables(),
           },
           rawVariables: {
-            enquiry_message: `<strong>${escapeHtml(safeSubject)}</strong><br/><br/>${messageHtml}`,
+            enquiry_message: enquiryMessageHtml,
           },
         })
       : Promise.resolve(),
