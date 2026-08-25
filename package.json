@@ -15,6 +15,7 @@
     "seed": "tsx scripts/seed-from-legacy-data.ts",
     "seed:rbac": "tsx scripts/seed-rbac.ts",
     "migrate:admin-roles": "tsx scripts/migrate-admin-roles.ts",
+    "seed:storefront-content": "tsx scripts/seed-storefront-content.ts",
     "seed:categories": "tsx scripts/seed-categories.ts",
     "seed:catalog": "tsx scripts/reseed-real-catalog.ts",
     "setup:storage": "tsx scripts/setup-storage.ts",

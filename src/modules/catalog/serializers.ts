@@ -224,6 +224,7 @@ export function toProductDTO(row: any, opts: { includeDisabledCustomizations?: b
     costPrice: row.cost_price != null ? Number(row.cost_price) : undefined,
     isTaxable: row.is_taxable ?? true,
     taxClass: row.tax_class ?? undefined,
+    taxCategoryId: row.tax_category_id ?? undefined,
     salePrice: row.sale_price != null ? Number(row.sale_price) : undefined,
     saleStartDate: row.sale_start_date ?? undefined,
     saleEndDate: row.sale_end_date ?? undefined,

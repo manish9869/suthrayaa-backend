@@ -143,6 +143,7 @@ const productSchema = z.object({
   costPrice: z.number().min(0).optional().nullable(),
   isTaxable: z.boolean().optional(),
   taxClass: z.string().optional().nullable(),
+  taxCategoryId: z.string().uuid().optional().nullable(),
   salePrice: z.number().min(0).optional().nullable(),
   saleStartDate: z.string().optional().nullable(),
   saleEndDate: z.string().optional().nullable(),
@@ -223,6 +224,7 @@ adminProductsRouter.post("/", requirePermission("products.create"), validate(pro
         cost_price: body.costPrice,
         is_taxable: body.isTaxable,
         tax_class: body.taxClass,
+        tax_category_id: body.taxCategoryId,
         sale_price: body.salePrice,
         sale_start_date: body.saleStartDate,
         sale_end_date: body.saleEndDate,
@@ -314,6 +316,7 @@ adminProductsRouter.patch("/:id", requirePermission("products.update"), validate
     if (body.costPrice !== undefined) patch.cost_price = body.costPrice;
     if (body.isTaxable !== undefined) patch.is_taxable = body.isTaxable;
     if (body.taxClass !== undefined) patch.tax_class = body.taxClass;
+    if (body.taxCategoryId !== undefined) patch.tax_category_id = body.taxCategoryId;
     if (body.salePrice !== undefined) patch.sale_price = body.salePrice;
     if (body.saleStartDate !== undefined) patch.sale_start_date = body.saleStartDate;
     if (body.saleEndDate !== undefined) patch.sale_end_date = body.saleEndDate;

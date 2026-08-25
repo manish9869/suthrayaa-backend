@@ -43,7 +43,14 @@ import { adminReviewsRouter } from "./modules/admin/admin.reviews.routes.js";
 import { adminCustomizationTemplatesRouter } from "./modules/admin/admin.customizationTemplates.routes.js";
 import { adminEmailTemplatesRouter, adminEmailLogsRouter } from "./modules/admin/admin.emails.routes.js";
 import { adminInvoiceSettingsRouter } from "./modules/admin/admin.settings.routes.js";
+import { adminSiteSettingsRouter } from "./modules/admin/admin.siteSettings.routes.js";
 import { analyticsRouter } from "./modules/analytics/analytics.routes.js";
+import {
+  publicSettingsRouter,
+  publicNavRouter,
+  publicFooterRouter,
+  publicHomepageSectionsRouter,
+} from "./modules/settings/publicSettings.routes.js";
 
 export function createApp() {
   const app = express();
@@ -83,6 +90,12 @@ export function createApp() {
   app.use("/api/hero-slides", heroSlidesRouter);
   app.use("/api/reviews", reviewsRouter);
 
+  // Public site settings — unauthenticated, filtered to isPublic-only keys in settings.service.
+  app.use("/api/site-settings/public", publicSettingsRouter);
+  app.use("/api/nav-items", publicNavRouter);
+  app.use("/api/footer-links", publicFooterRouter);
+  app.use("/api/homepage-sections", publicHomepageSectionsRouter);
+
   // Customer-facing
   app.use("/api/me", meRouter);
   app.use("/api/checkout", checkoutRouter);
@@ -104,6 +117,7 @@ export function createApp() {
   app.use("/api/admin/emails/templates", adminEmailTemplatesRouter);
   app.use("/api/admin/emails/logs", adminEmailLogsRouter);
   app.use("/api/admin/settings/invoice", adminInvoiceSettingsRouter);
+  app.use("/api/admin/settings", adminSiteSettingsRouter);
   app.use("/api/admin/analytics", analyticsRouter);
   app.use("/api/admin/users", adminUsersRouter);
   app.use("/api/admin/roles", adminRolesRouter);

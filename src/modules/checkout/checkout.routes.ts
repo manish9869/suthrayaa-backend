@@ -6,6 +6,7 @@ import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { HttpError } from "../../lib/httpError.js";
 import { env } from "../../config/env.js";
 import { validateAndPriceCart, placeOrder, verifyRazorpayPayment } from "./checkout.service.js";
+import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
 
 export const checkoutRouter = Router();
 
@@ -28,6 +29,7 @@ const validateCartSchema = z.object({
   shippingMethod: z.enum(["standard", "express"]).optional(),
   couponCode: z.string().optional(),
   giftWrap: z.boolean().optional(),
+  shippingState: z.string().optional(),
 });
 
 checkoutRouter.post(
@@ -42,6 +44,7 @@ checkoutRouter.post(
         couponCode: body.couponCode,
         giftWrap: body.giftWrap,
         customerId: req.user?.id,
+        shippingState: body.shippingState,
       });
       res.json(priced);
     } catch (err) {
@@ -53,13 +56,18 @@ checkoutRouter.post(
 const addressSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  phone: z.string().min(6),
+  phone: z
+    .string()
+    .refine(isValidIndianMobile, "Enter a valid 10-digit Indian mobile number")
+    .transform(normalizeIndianMobile),
   email: z.string().email().optional(),
   addressLine1: z.string().min(1),
   addressLine2: z.string().optional(),
+  landmark: z.string().optional(),
   city: z.string().min(1),
-  state: z.string().min(1),
-  pincode: z.string().min(4),
+  district: z.string().optional(),
+  state: z.string().refine(isValidIndianState, "Select a valid Indian state or union territory"),
+  pincode: z.string().refine(isValidIndianPincode, "Enter a valid 6-digit PIN code"),
 });
 
 const placeOrderSchema = z.object({

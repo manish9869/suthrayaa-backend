@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "../../config/supabase.js";
+import { getSetting } from "../settings/settings.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -20,6 +21,7 @@ interface InvoiceSnapshot {
     email: string | null;
     phone: string | null;
     taxNumber: string | null;
+    gstin: string | null;
     footer: string | null;
     terms: string | null;
     currency: string;
@@ -40,6 +42,10 @@ interface InvoiceSnapshot {
   shippingCost: number;
   giftWrapCost: number;
   taxAmount: number;
+  cgstAmount: number;
+  sgstAmount: number;
+  igstAmount: number;
+  taxLabel: string;
   total: number;
 }
 
@@ -71,6 +77,7 @@ export async function createInvoiceForOrder(orderId: string) {
       email: settings?.email ?? null,
       phone: settings?.phone ?? null,
       taxNumber: settings?.tax_number ?? null,
+      gstin: settings?.is_gst_registered ? settings?.gstin ?? null : null,
       footer: settings?.footer ?? null,
       terms: settings?.terms ?? null,
       currency: settings?.currency ?? "INR",
@@ -97,7 +104,11 @@ export async function createInvoiceForOrder(orderId: string) {
     discountAmount: Number(order.discount_amount),
     shippingCost: Number(order.shipping_cost),
     giftWrapCost: Number(order.gift_wrap_cost),
-    taxAmount: 0,
+    taxAmount: Number(order.tax_amount ?? 0),
+    cgstAmount: Number(order.cgst_amount ?? 0),
+    sgstAmount: Number(order.sgst_amount ?? 0),
+    igstAmount: Number(order.igst_amount ?? 0),
+    taxLabel: await getSetting<string>("tax.tax_label").catch(() => "GST"),
     total: Number(order.total),
   };
 
@@ -198,7 +209,12 @@ export async function renderInvoicePdf(
     }
     doc.fontSize(18).font("Helvetica-Bold").fillColor(BRAND.ink).text(snapshot.business.name, textX, 42);
     doc.fontSize(8).font("Helvetica").fillColor(BRAND.muted);
-    const businessLines = [snapshot.business.address, snapshot.business.email, snapshot.business.phone, snapshot.business.taxNumber ? `Tax No: ${snapshot.business.taxNumber}` : null].filter(Boolean);
+    const businessLines = [
+      snapshot.business.address,
+      snapshot.business.email,
+      snapshot.business.phone,
+      snapshot.business.gstin ? `GSTIN: ${snapshot.business.gstin}` : snapshot.business.taxNumber ? `Tax No: ${snapshot.business.taxNumber}` : null,
+    ].filter(Boolean);
     doc.text(businessLines.join("\n"), textX, 64, { width: (left + 280) - textX });
 
     // Right side — "INVOICE" title, number, and a payment-status pill
@@ -307,7 +323,14 @@ export async function renderInvoicePdf(
     if (snapshot.discountAmount > 0) totalsRows.push(["Discount", -snapshot.discountAmount]);
     totalsRows.push(["Shipping", snapshot.shippingCost]);
     if (snapshot.giftWrapCost > 0) totalsRows.push(["Gift Wrap", snapshot.giftWrapCost]);
-    if (snapshot.business.showTax && snapshot.taxAmount > 0) totalsRows.push(["Tax", snapshot.taxAmount]);
+    if (snapshot.business.showTax && snapshot.taxAmount > 0) {
+      if (snapshot.igstAmount > 0) {
+        totalsRows.push([`IGST`, snapshot.igstAmount]);
+      } else {
+        if (snapshot.cgstAmount > 0) totalsRows.push([`CGST`, snapshot.cgstAmount]);
+        if (snapshot.sgstAmount > 0) totalsRows.push([`SGST`, snapshot.sgstAmount]);
+      }
+    }
 
     doc.fontSize(9).font("Helvetica");
     for (const [label, amount] of totalsRows) {

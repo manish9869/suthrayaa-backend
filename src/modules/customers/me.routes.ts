@@ -5,6 +5,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
 import { HttpError } from "../../lib/httpError.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
+import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -78,12 +79,15 @@ const addressSchema = z.object({
   label: z.string().optional(),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  phone: z.string().min(6),
+  phone: z.string().refine(isValidIndianMobile, "Enter a valid 10-digit Indian mobile number").transform(normalizeIndianMobile),
   addressLine1: z.string().min(1),
   addressLine2: z.string().optional(),
+  landmark: z.string().optional(),
   city: z.string().min(1),
-  state: z.string().min(1),
-  pincode: z.string().min(4),
+  district: z.string().optional(),
+  state: z.string().refine(isValidIndianState, "Select a valid Indian state or union territory"),
+  pincode: z.string().refine(isValidIndianPincode, "Enter a valid 6-digit PIN code"),
+  addressType: z.enum(["home", "work", "other"]).optional(),
   isDefault: z.boolean().optional(),
 });
 
@@ -103,9 +107,12 @@ meRouter.post("/addresses", validate(addressSchema), async (req, res, next) => {
         phone: body.phone,
         address_line1: body.addressLine1,
         address_line2: body.addressLine2,
+        landmark: body.landmark,
         city: body.city,
+        district: body.district,
         state: body.state,
         pincode: body.pincode,
+        address_type: body.addressType,
         is_default: body.isDefault ?? false,
       })
       .select("*")
@@ -132,9 +139,12 @@ meRouter.patch("/addresses/:id", validate(addressSchema.partial()), async (req, 
         phone: body.phone,
         address_line1: body.addressLine1,
         address_line2: body.addressLine2,
+        landmark: body.landmark,
         city: body.city,
+        district: body.district,
         state: body.state,
         pincode: body.pincode,
+        address_type: body.addressType,
         is_default: body.isDefault,
       })
       .eq("id", req.params.id)

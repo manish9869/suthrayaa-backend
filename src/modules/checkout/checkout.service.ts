@@ -14,6 +14,9 @@ import {
 } from "../email/email.service.js";
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
+import { getShippingQuote } from "../settings/shipping.service.js";
+import { getSetting, getSettingsMap } from "../settings/settings.service.js";
+import { computeGst } from "../settings/tax.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -56,6 +59,7 @@ interface ValidatedLine {
   customText?: string;
   customizations: CustomizationSnapshot[];
   lineTotal: number;
+  taxCategoryId?: string | null;
 }
 
 /**
@@ -138,13 +142,9 @@ function resolveCustomizations(product: any, selections: CustomizationSelectionI
   return { snapshot, priceAdjustmentTotal: Math.round(priceAdjustmentTotal * 100) / 100 };
 }
 
-const SHIPPING_RATES: Record<string, number> = { standard: 60, express: 150 };
-const FREE_SHIPPING_THRESHOLD = 999;
-const GIFT_WRAP_COST = 49;
-
 export async function validateAndPriceCart(
   items: CartItemInput[],
-  opts: { shippingMethod?: string; couponCode?: string; giftWrap?: boolean; customerId?: string } = {}
+  opts: { shippingMethod?: string; couponCode?: string; giftWrap?: boolean; customerId?: string; shippingState?: string } = {}
 ) {
   if (!items.length) throw HttpError.badRequest("Cart is empty");
 
@@ -229,6 +229,7 @@ export async function validateAndPriceCart(
       customText: item.customText,
       customizations,
       lineTotal: Math.round(unitPrice * item.quantity * 100) / 100,
+      taxCategoryId: product.tax_category_id,
     });
   }
 
@@ -244,14 +245,81 @@ export async function validateAndPriceCart(
         : Math.min(Number(coupon.value), subtotal);
   }
 
-  const shippingCost =
-    subtotal - discount >= FREE_SHIPPING_THRESHOLD
-      ? 0
-      : SHIPPING_RATES[opts.shippingMethod ?? "standard"] ?? SHIPPING_RATES.standard;
-  const giftWrapCost = opts.giftWrap ? GIFT_WRAP_COST : 0;
-  const total = Math.round((subtotal - discount + shippingCost + giftWrapCost) * 100) / 100;
+  const netSubtotal = subtotal - discount;
+  const [shippingQuote, giftWrapFee, gstEnabled, pricesIncludeGst, sellerState, defaultTaxCategoryId] = await Promise.all([
+    getShippingQuote(opts.shippingState, netSubtotal, opts.shippingMethod === "express" ? "express" : "standard"),
+    getSetting<number>("shipping.gift_wrap_fee"),
+    getSetting<boolean>("tax.gst_enabled"),
+    getSetting<boolean>("tax.prices_include_gst"),
+    getSetting<string>("business.gst_state"),
+    getSetting<string>("tax.default_tax_category_id"),
+  ]);
 
-  return { lines, subtotal, discount, coupon, shippingCost, giftWrapCost, total };
+  const shippingCost = shippingQuote.fee;
+  const giftWrapCost = opts.giftWrap ? giftWrapFee : 0;
+
+  // GST is off by default (tax.gst_enabled=false) — in that state this block is fully
+  // inert and pricing is byte-identical to the pre-settings implementation.
+  let taxAmount = 0;
+  let cgstAmount = 0;
+  let sgstAmount = 0;
+  let igstAmount = 0;
+  let total = Math.round((netSubtotal + shippingCost + giftWrapCost) * 100) / 100;
+
+  if (gstEnabled && opts.shippingState && sellerState) {
+    const rateByCategoryId = await getTaxRatesByCategory();
+
+    // Compute GST per line (rates can differ by product) rather than on the pooled
+    // subtotal, then sum — correct even when the cart mixes tax categories.
+    let totalTax = 0;
+    for (const line of lines) {
+      const rate = rateByCategoryId.get(line.taxCategoryId ?? "") ?? rateByCategoryId.get(defaultTaxCategoryId) ?? 0;
+      const gst = computeGst({
+        amount: line.lineTotal,
+        ratePercent: rate,
+        sellerState,
+        buyerState: opts.shippingState,
+        pricesIncludeGst,
+      });
+      totalTax += gst.totalTax;
+      cgstAmount += gst.cgst;
+      sgstAmount += gst.sgst;
+      igstAmount += gst.igst;
+    }
+    taxAmount = Math.round(totalTax * 100) / 100;
+    cgstAmount = Math.round(cgstAmount * 100) / 100;
+    sgstAmount = Math.round(sgstAmount * 100) / 100;
+    igstAmount = Math.round(igstAmount * 100) / 100;
+
+    // Inclusive pricing: tax is already inside netSubtotal, so the total doesn't change —
+    // only the breakdown is stored, for invoice display. Exclusive pricing adds it on top.
+    if (!pricesIncludeGst) {
+      total = Math.round((netSubtotal + shippingCost + giftWrapCost + taxAmount) * 100) / 100;
+    }
+  }
+
+  return {
+    lines,
+    subtotal,
+    discount,
+    coupon,
+    shippingCost,
+    giftWrapCost,
+    total,
+    taxAmount,
+    cgstAmount,
+    sgstAmount,
+    igstAmount,
+    shippingEstimate: shippingQuote.estimateDays,
+  };
+}
+
+let taxRateCache: Map<string, number> | null = null;
+async function getTaxRatesByCategory(): Promise<Map<string, number>> {
+  if (taxRateCache) return taxRateCache;
+  const { data } = await supabaseAdmin.from("tax_categories").select("id, rate");
+  taxRateCache = new Map((data ?? []).map((r: any) => [r.id, Number(r.rate)]));
+  return taxRateCache;
 }
 
 export async function validateCoupon(code: string, subtotal: number, customerId?: string) {
@@ -303,7 +371,9 @@ export interface ShippingAddressInput {
   email?: string;
   addressLine1: string;
   addressLine2?: string;
+  landmark?: string;
   city: string;
+  district?: string;
   state: string;
   pincode: string;
 }
@@ -320,12 +390,32 @@ export interface PlaceOrderInput {
 }
 
 export async function placeOrder(input: PlaceOrderInput) {
+  const [razorpayEnabled, codEnabled, codMin, codMax, orderMin, orderMax] = await Promise.all([
+    getSetting<boolean>("payment.razorpay_enabled"),
+    getSetting<boolean>("payment.cod_enabled"),
+    getSetting<number>("payment.cod_min_amount"),
+    getSetting<number>("payment.cod_max_amount"),
+    getSetting<number>("order.min_amount"),
+    getSetting<number>("order.max_amount"),
+  ]);
+  if (input.paymentMethod === "razorpay" && !razorpayEnabled) throw HttpError.badRequest("Online payment is currently unavailable");
+  if (input.paymentMethod === "cod" && !codEnabled) throw HttpError.badRequest("Cash on Delivery is currently unavailable");
+
   const priced = await validateAndPriceCart(input.items, {
     shippingMethod: input.shippingMethod,
     couponCode: input.couponCode,
     giftWrap: input.giftWrap,
     customerId: input.customerId,
+    shippingState: input.shippingAddress.state,
   });
+
+  if (orderMin > 0 && priced.total < orderMin) throw HttpError.badRequest(`Minimum order amount is ${formatPrice(orderMin)}`);
+  if (orderMax > 0 && priced.total > orderMax) throw HttpError.badRequest(`Maximum order amount is ${formatPrice(orderMax)}`);
+
+  if (input.paymentMethod === "cod") {
+    if (codMin > 0 && priced.total < codMin) throw HttpError.badRequest(`Cash on Delivery requires a minimum order of ${formatPrice(codMin)}`);
+    if (codMax > 0 && priced.total > codMax) throw HttpError.badRequest(`Cash on Delivery is unavailable for orders above ${formatPrice(codMax)}`);
+  }
 
   const orderNumber = await generateOrderNumber();
   const isCod = input.paymentMethod === "cod";
@@ -343,6 +433,10 @@ export async function placeOrder(input: PlaceOrderInput) {
       shipping_cost: priced.shippingCost,
       gift_wrap_cost: priced.giftWrapCost,
       total: priced.total,
+      tax_amount: priced.taxAmount,
+      cgst_amount: priced.cgstAmount,
+      sgst_amount: priced.sgstAmount,
+      igst_amount: priced.igstAmount,
       shipping_address: input.shippingAddress,
       shipping_method: input.shippingMethod,
       payment_method: input.paymentMethod,

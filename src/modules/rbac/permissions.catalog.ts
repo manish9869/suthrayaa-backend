@@ -25,6 +25,14 @@ const ACTION_LABEL: Record<string, string> = {
   manage: "Manage",
   assign_role: "Assign roles",
   assign_permissions: "Assign permissions",
+  branding: "Branding",
+  storefront: "Storefront",
+  tax: "GST & Tax",
+  shipping: "Shipping",
+  payment: "Payments",
+  email: "Email",
+  maintenance: "Maintenance",
+  analytics: "Analytics",
 };
 
 function group(groupName: string, resource: string, resourceLabel: string, actions: string[]): PermissionDef[] {
@@ -64,7 +72,22 @@ export const PERMISSIONS: PermissionDef[] = [
   // Administration
   ...group("Administration", "users", "Users", ["view", "create", "update", "delete", "assign_role"]),
   ...group("Administration", "roles", "Roles", ["view", "create", "update", "delete", "assign_permissions"]),
-  ...group("Administration", "settings", "Settings", ["view", "update"]),
+  // "view"/"update" are the baseline every settings.* group needs; the rest gate one
+  // specific, business-critical group each (checked IN ADDITION to settings.update — see
+  // SENSITIVE_GROUP_PERMISSION in settings.catalog.ts) so no admin gets unrestricted access
+  // to GST/payment/maintenance just by having generic "can edit settings" access.
+  ...group("Administration", "settings", "Settings", [
+    "view",
+    "update",
+    "branding",
+    "storefront",
+    "tax",
+    "shipping",
+    "payment",
+    "email",
+    "maintenance",
+    "analytics",
+  ]),
   ...group("Administration", "audit_logs", "Audit Logs", ["view"]),
 
   // Analytics
