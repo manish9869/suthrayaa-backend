@@ -279,7 +279,7 @@ export async function renderInvoicePdf(
       if (showSku) doc.text(item.sku ?? "—", colSku, y, { width: 70 });
       doc.text(String(item.quantity), colQty, y);
       doc.text(fmt(item.unitPrice), colPrice, y);
-      doc.text(fmt(item.lineTotal), colTotal, y, { width: 85, align: "right" });
+      doc.text(fmt(item.lineTotal), colTotal, y, { width: 85 - 10, align: "right" });
       y += 14;
 
       if (snapshot.business.showCustomizationPricing) {
@@ -312,7 +312,7 @@ export async function renderInvoicePdf(
     doc.fontSize(9).font("Helvetica");
     for (const [label, amount] of totalsRows) {
       doc.fillColor(BRAND.muted).text(label, left + contentW - 220, y, { width: 130 });
-      doc.fillColor(BRAND.ink).text(`${amount < 0 ? "-" : ""}${fmt(amount)}`, colTotal, y, { width: 85, align: "right" });
+      doc.fillColor(BRAND.ink).text(`${amount < 0 ? "-" : ""}${fmt(amount)}`, colTotal, y, { width: 85 - 10, align: "right" });
       y += 16;
     }
 
@@ -320,7 +320,7 @@ export async function renderInvoicePdf(
     const bandH = 42;
     doc.roundedRect(left + contentW - 220, y, 220, bandH, 8).fill(BRAND.primaryTint);
     doc.fontSize(9).font("Helvetica-Bold").fillColor(BRAND.muted).text("TOTAL", left + contentW - 220 + 16, y + 15, { characterSpacing: 1 });
-    doc.fontSize(18).font("Helvetica-Bold").fillColor(BRAND.primary).text(fmt(snapshot.total), left + contentW - 220, y + 11, { width: 200, align: "right" });
+    doc.fontSize(18).font("Helvetica-Bold").fillColor(BRAND.primary).text(fmt(snapshot.total), left + contentW - 220, y + 11, { width: 210, align: "right" });
     y += bandH + 22;
 
     doc.font("Helvetica").fontSize(8).fillColor(BRAND.muted).text(`Payment method: ${snapshot.paymentMethod === "cod" ? "Cash on Delivery" : "Razorpay"}`, left, y);
