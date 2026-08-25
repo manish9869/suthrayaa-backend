@@ -20,26 +20,34 @@ adminCustomersRouter.get("/", async (req, res, next) => {
       .range((pageNum - 1) * limitNum, pageNum * limitNum - 1);
     if (error) throw HttpError.internal(error.message);
 
-    // Per-customer order enrichment — fine at boutique-store order volumes.
-    const items = await Promise.all(
-      (data ?? []).map(async (c) => {
-        const { data: orders } = await supabaseAdmin
-          .from("orders")
-          .select("total, payment_status")
-          .eq("customer_id", c.id);
-        const paid = (orders ?? []).filter((o) => o.payment_status === "paid");
-        return {
-          id: c.id,
-          email: c.email,
-          phone: c.phone,
-          firstName: c.first_name,
-          lastName: c.last_name,
-          createdAt: c.created_at,
-          orderCount: paid.length,
-          totalSpent: paid.reduce((s, o) => s + Number(o.total), 0),
-        };
-      })
-    );
+    const customerIds = (data ?? []).map((c) => c.id);
+    // One batched query for every customer on this page instead of one query per customer —
+    // avoids an N+1 round trip that made the customers list slow to load at higher page sizes.
+    const { data: allOrders } = customerIds.length
+      ? await supabaseAdmin.from("orders").select("customer_id, total, payment_status").in("customer_id", customerIds)
+      : { data: [] as { customer_id: string | null; total: number; payment_status: string }[] };
+
+    const ordersByCustomer = new Map<string, { total: number; payment_status: string }[]>();
+    for (const o of allOrders ?? []) {
+      if (!o.customer_id) continue;
+      const list = ordersByCustomer.get(o.customer_id) ?? [];
+      list.push(o);
+      ordersByCustomer.set(o.customer_id, list);
+    }
+
+    const items = (data ?? []).map((c) => {
+      const paid = (ordersByCustomer.get(c.id) ?? []).filter((o) => o.payment_status === "paid");
+      return {
+        id: c.id,
+        email: c.email,
+        phone: c.phone,
+        firstName: c.first_name,
+        lastName: c.last_name,
+        createdAt: c.created_at,
+        orderCount: paid.length,
+        totalSpent: paid.reduce((s, o) => s + Number(o.total), 0),
+      };
+    });
 
     res.json({ items, total: count ?? 0, page: pageNum, limit: limitNum });
   } catch (err) {
