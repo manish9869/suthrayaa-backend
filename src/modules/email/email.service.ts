@@ -204,7 +204,7 @@ export function wrapEmail(
           </td></tr>
 
           <tr><td align="center" style="background:${BRAND.footerBg};padding:28px 32px;">
-            <img src="${LOGO_URL}" alt="Suthrayaa" width="56" style="width:56px;max-width:56px;height:auto;margin:0 auto 12px;display:block;"/>
+            <img src="${LOGO_URL}" alt="Suthrayaa" width="56" style="width:56px;max-width:56px;height:auto;margin:0 auto 12px;display:block;filter:brightness(0) invert(1);"/>
             <p style="margin:0 0 6px;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:700;color:${BRAND.footerHeading};">Suthrayaa</p>
             <p style="margin:0 0 14px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${BRAND.footerMuted};">Handcrafted with love, made just for you</p>
             <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:10px;"><a href="${env.FRONTEND_URL}" target="_blank" style="color:${BRAND.footerLink};text-decoration:none;">Shop</a></p>
@@ -294,11 +294,19 @@ function isTruthy(variables: Record<string, string>, key: string): boolean {
   return Boolean(v) && v !== "false" && v !== "0";
 }
 
+// Matches only an innermost {{#if}}...{{/if}} block — one whose body contains no further
+// {{#if }} of its own — via a negative lookahead that refuses to cross into a nested opener.
+// Resolving repeatedly from the inside out (see substituteConditionals) lets nested
+// conditionals (e.g. {{#if coupon_code}} inside {{#if has_discount}}) close at the right
+// {{/if}} instead of a naive non-greedy regex matching the nearest {{/if}} regardless of depth.
+const LEAF_IF = /\{\{#if (\w+)\}\}((?:(?!\{\{#if )[\s\S])*?)(?:\{\{else\}\}((?:(?!\{\{#if )[\s\S])*?))?\{\{\/if\}\}/;
+
 function substituteConditionals(str: string, variables: Record<string, string>): string {
-  return str.replace(
-    /\{\{#if (\w+)\}\}([\s\S]*?)(?:\{\{else\}\}([\s\S]*?))?\{\{\/if\}\}/g,
-    (_match, key: string, whenTrue: string, whenFalse = "") => (isTruthy(variables, key) ? whenTrue : whenFalse)
-  );
+  let result = str;
+  while (LEAF_IF.test(result)) {
+    result = result.replace(LEAF_IF, (_match, key: string, whenTrue: string, whenFalse = "") => (isTruthy(variables, key) ? whenTrue : whenFalse));
+  }
+  return result;
 }
 
 function substituteVars(str: string, variables: Record<string, string>, rawVariables: Record<string, string>): string {
@@ -311,8 +319,9 @@ function substituteVars(str: string, variables: Record<string, string>, rawVaria
 
 /** {{variables}} are HTML-escaped (may contain customer-supplied text); rawVariables are
  * trusted, already-safe HTML built server-side (e.g. an items table) and inserted as-is.
- * {{#if flag}}...{{else}}...{{/if}} blocks (no nesting) let a single template branch on a
- * boolean-ish variable — e.g. showing a tracking number only once one exists.
+ * {{#if flag}}...{{else}}...{{/if}} blocks (nesting is fine, e.g. {{#if coupon_code}} inside
+ * {{#if has_discount}}) let a template branch on a boolean-ish variable — e.g. showing a
+ * tracking number only once one exists.
  * {{#each listKey}}...{{/each}} repeats its block once per row in `listVariables[listKey]`,
  * with {{#if}}/{{var}} inside the block resolved against that row's own fields (e.g. looping
  * order line items with a per-item product image, quantity, and price). */
