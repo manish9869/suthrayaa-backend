@@ -1,6 +1,5 @@
 import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "../../config/supabase.js";
-import { formatPrice } from "../../lib/format.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -132,6 +131,32 @@ async function fetchLogoBuffer(logoUrl: string | null): Promise<Buffer | null> {
   }
 }
 
+// Mirrors the warm terracotta/cream palette in app/globals.css and email.service.ts's
+// BRAND tokens. pdfkit takes plain hex only (no CSS vars, no rgba shorthand for fills),
+// so translucent-looking backgrounds are pre-mixed flat tints instead.
+const BRAND = {
+  ink: "#3a2420",
+  muted: "#8a7a63",
+  border: "#e8dcc4",
+  primary: "#c1502e",
+  primaryTint: "#f8e6da",
+  cardBg: "#fbf6ee",
+  headerBg: "#3a2420",
+  mint: "#dcebd7",
+  mintInk: "#22391f",
+  gold: "#f5e6c8",
+  goldInk: "#5c3a1e",
+  destructiveBg: "#f6dcdc",
+  destructiveInk: "#7a1f1f",
+};
+
+function statusPillColors(paymentStatus: string): { bg: string; fg: string } {
+  if (paymentStatus === "paid") return { bg: BRAND.mint, fg: BRAND.mintInk };
+  if (paymentStatus === "failed") return { bg: BRAND.destructiveBg, fg: BRAND.destructiveInk };
+  if (paymentStatus === "refunded" || paymentStatus === "partially_refunded") return { bg: BRAND.gold, fg: BRAND.goldInk };
+  return { bg: BRAND.cardBg, fg: BRAND.muted };
+}
+
 /** Renders a stored invoice snapshot to a PDF buffer. `liveStatus`/`livePaymentStatus` are
  * read fresh from the order at render time — only pricing/product details stay frozen. */
 export async function renderInvoicePdf(
@@ -149,108 +174,132 @@ export async function renderInvoicePdf(
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const fmt = (n: number) => formatPrice(n);
+    // pdfkit's built-in Helvetica is a base-14 PDF font (WinAnsi encoding only) — it has no
+    // glyph for ₹, so formatPrice()'s output renders as a garbled superscript in the PDF
+    // (fine in HTML/email, broken here). "Rs." is plain ASCII and renders correctly.
+    const fmt = (n: number) => `Rs. ${new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Math.abs(n))}`;
+    const pageW = doc.page.width;
+    const left = 50;
+    const right = pageW - 50;
+    const contentW = right - left;
+
+    // Top accent bar
+    doc.rect(0, 0, pageW, 6).fill(BRAND.primary);
 
     // Header — logo (if any) at top-left, business name/details shifted right to make room.
-    const textX = logoBuffer ? 110 : 50;
+    const textX = logoBuffer ? 108 : left;
     if (logoBuffer) {
       try {
-        doc.image(logoBuffer, 50, 45, { fit: [50, 50] });
+        doc.roundedRect(left, 38, 48, 48, 8).fill(BRAND.cardBg);
+        doc.image(logoBuffer, left + 4, 42, { fit: [40, 40] });
       } catch {
         // Corrupt/unsupported image data — fall back to text-only rather than fail the invoice.
       }
     }
-    doc.fontSize(18).font("Helvetica-Bold").text(snapshot.business.name, textX, 50);
-    doc.fontSize(9).font("Helvetica").fillColor("#555");
+    doc.fontSize(18).font("Helvetica-Bold").fillColor(BRAND.ink).text(snapshot.business.name, textX, 42);
+    doc.fontSize(8).font("Helvetica").fillColor(BRAND.muted);
     const businessLines = [snapshot.business.address, snapshot.business.email, snapshot.business.phone, snapshot.business.taxNumber ? `Tax No: ${snapshot.business.taxNumber}` : null].filter(Boolean);
-    doc.text(businessLines.join("\n"), textX, 72, { width: 280 - (textX - 50) });
+    doc.text(businessLines.join("\n"), textX, 64, { width: (left + 280) - textX });
 
-    doc.fontSize(16).font("Helvetica-Bold").fillColor("#000").text("INVOICE", 350, 50, { width: 195, align: "right" });
-    doc.fontSize(9).font("Helvetica").fillColor("#333");
-    doc.text(
-      [
-        `Invoice #: ${invoiceNumber}`,
-        `Order #: ${snapshot.orderNumber}`,
-        `Date: ${new Date(snapshot.orderDate).toLocaleDateString("en-IN")}`,
-        `Status: ${liveStatus.replace(/_/g, " ")}`,
-        `Payment: ${livePaymentStatus.replace(/_/g, " ")}`,
-      ].join("\n"),
-      350,
-      95,
-      { width: 195, align: "right" }
-    );
+    // Right side — "INVOICE" title, number, and a payment-status pill
+    doc.fontSize(8).font("Helvetica-Bold").fillColor(BRAND.muted).text("PAYMENT RECEIPT", left + 300, 38, { width: contentW - 300, align: "right", characterSpacing: 1 });
+    doc.fontSize(24).font("Helvetica-Bold").fillColor(BRAND.ink).text("INVOICE", left + 300, 50, { width: contentW - 300, align: "right" });
+    doc.fontSize(9).font("Helvetica").fillColor(BRAND.muted).text(`No. ${invoiceNumber}`, left + 300, 80, { width: contentW - 300, align: "right" });
 
-    let y = 165;
-    doc.moveTo(50, y).lineTo(545, y).strokeColor("#ddd").stroke();
-    y += 14;
+    const pillLabel = livePaymentStatus.replace(/_/g, " ").toUpperCase();
+    const pillColors = statusPillColors(livePaymentStatus);
+    doc.fontSize(8).font("Helvetica-Bold");
+    const pillW = doc.widthOfString(pillLabel) + 22;
+    const pillH = 18;
+    const pillX = right - pillW;
+    const pillY = 96;
+    doc.roundedRect(pillX, pillY, pillW, pillH, pillH / 2).fill(pillColors.bg);
+    doc.fillColor(pillColors.fg).text(pillLabel, pillX, pillY + 5, { width: pillW, align: "center" });
 
-    // Bill To / Ship To
-    doc.fontSize(10).font("Helvetica-Bold").fillColor("#000").text("Ship To", 50, y);
-    y += 14;
-    doc.fontSize(9).font("Helvetica").fillColor("#333");
+    let y = 132;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor(BRAND.border).lineWidth(1).stroke();
+    y += 18;
+
+    // FROM / BILL TO / INVOICE DATE — three info cards
+    const cardGap = 10;
+    const cardW = (contentW - cardGap * 2) / 3;
+    const cardH = 92;
+    const cardTop = y;
     const a = snapshot.shippingAddress ?? {};
-    doc.text(
-      [
-        snapshot.customerName,
-        [a.addressLine1, a.addressLine2].filter(Boolean).join(", "),
-        [a.city, a.state, a.pincode].filter(Boolean).join(", "),
-        snapshot.customerPhone,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      50,
-      y,
-      { width: 300 }
-    );
+    const cards: { x: number; label: string; title: string; lines: string[] }[] = [
+      { x: left, label: "FROM", title: snapshot.business.name, lines: [snapshot.business.address, snapshot.business.email].filter((v): v is string => Boolean(v)) },
+      { x: left + cardW + cardGap, label: "BILL TO", title: snapshot.customerName, lines: [snapshot.customerEmail, snapshot.customerPhone].filter((v): v is string => Boolean(v)) },
+      {
+        x: left + 2 * (cardW + cardGap),
+        label: "INVOICE DATE",
+        title: new Date(snapshot.orderDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+        lines: [`Order status: ${liveStatus.replace(/_/g, " ")}`],
+      },
+    ];
+    for (const c of cards) {
+      doc.roundedRect(c.x, cardTop, cardW, cardH, 8).fill(BRAND.cardBg);
+      doc.fontSize(7).font("Helvetica-Bold").fillColor(BRAND.primary).text(c.label, c.x + 14, cardTop + 14, { characterSpacing: 1 });
+      doc.fontSize(10).font("Helvetica-Bold").fillColor(BRAND.ink).text(c.title, c.x + 14, cardTop + 28, { width: cardW - 28 });
+      doc.fontSize(8).font("Helvetica").fillColor(BRAND.muted).text(c.lines.join("\n"), c.x + 14, cardTop + 44, { width: cardW - 28 });
+    }
+    y = cardTop + cardH + 26;
 
-    y += 70;
-    doc.moveTo(50, y).lineTo(545, y).strokeColor("#ddd").stroke();
-    y += 10;
-
-    // Items table header
-    const showSku = snapshot.business.showSku;
-    const colProduct = 50;
-    const colSku = 260;
-    const colQty = showSku ? 340 : 300;
-    const colPrice = showSku ? 390 : 360;
-    const colTotal = showSku ? 470 : 460;
-
-    doc.fontSize(9).font("Helvetica-Bold");
-    doc.text("Product", colProduct, y);
-    if (showSku) doc.text("SKU", colSku, y);
-    doc.text("Qty", colQty, y);
-    doc.text("Price", colPrice, y);
-    doc.text("Total", colTotal, y, { width: 75, align: "right" });
+    // Ship To
+    doc.fontSize(9).font("Helvetica-Bold").fillColor(BRAND.primary).text("SHIP TO", left, y, { characterSpacing: 1 });
     y += 14;
-    doc.moveTo(50, y).lineTo(545, y).strokeColor("#ddd").stroke();
-    y += 8;
+    doc.fontSize(9).font("Helvetica").fillColor(BRAND.ink);
+    doc.text(
+      [snapshot.customerName, [a.addressLine1, a.addressLine2].filter(Boolean).join(", "), [a.city, a.state, a.pincode].filter(Boolean).join(", ")].filter(Boolean).join("\n"),
+      left,
+      y,
+      { width: 320 }
+    );
+    y += 52;
+
+    // Items table — dark header band
+    const showSku = snapshot.business.showSku;
+    const colProduct = left + 12;
+    const colSku = left + 220;
+    const colQty = showSku ? left + 300 : left + 260;
+    const colPrice = showSku ? left + 340 : left + 310;
+    const colTotal = left + contentW - 85;
+
+    doc.roundedRect(left, y, contentW, 24, 6).fill(BRAND.headerBg);
+    doc.fontSize(8).font("Helvetica-Bold").fillColor("#fff8f0");
+    doc.text("PRODUCT", colProduct, y + 8);
+    if (showSku) doc.text("SKU", colSku, y + 8);
+    doc.text("QTY", colQty, y + 8);
+    doc.text("PRICE", colPrice, y + 8);
+    doc.text("TOTAL", colTotal, y + 8, { width: 85 - 10, align: "right" });
+    y += 24 + 12;
 
     doc.font("Helvetica");
     for (const item of snapshot.items) {
-      doc.fontSize(9).fillColor("#000").text(item.name, colProduct, y, { width: showSku ? 200 : 240 });
+      doc.fontSize(9).fillColor(BRAND.ink).text(item.name, colProduct, y, { width: showSku ? colSku - colProduct - 10 : colQty - colProduct - 10 });
       if (showSku) doc.text(item.sku ?? "—", colSku, y, { width: 70 });
       doc.text(String(item.quantity), colQty, y);
       doc.text(fmt(item.unitPrice), colPrice, y);
-      doc.text(fmt(item.lineTotal), colTotal, y, { width: 75, align: "right" });
-      y += 13;
+      doc.text(fmt(item.lineTotal), colTotal, y, { width: 85, align: "right" });
+      y += 14;
 
       if (snapshot.business.showCustomizationPricing) {
         for (const c of item.customizations) {
           const val = c.valueLabel ?? c.textValue ?? "";
           const adj = c.priceAdjustment ? ` (${c.priceAdjustment > 0 ? "+" : ""}${fmt(c.priceAdjustment)})` : "";
-          doc.fontSize(8).fillColor("#666").text(`${c.label}: ${val}${adj}`, colProduct + 10, y, { width: 300 });
-          y += 11;
+          doc.fontSize(8).fillColor(BRAND.muted).text(`${c.label}: ${val}${adj}`, colProduct + 10, y, { width: 300 });
+          y += 12;
         }
       }
-      y += 6;
+      y += 8;
+      doc.moveTo(left, y - 4).lineTo(right, y - 4).strokeColor(BRAND.border).lineWidth(0.75).stroke();
+
       if (y > 700) {
         doc.addPage();
+        doc.rect(0, 0, pageW, 6).fill(BRAND.primary);
         y = 50;
       }
     }
 
-    y += 4;
-    doc.moveTo(50, y).lineTo(545, y).strokeColor("#ddd").stroke();
     y += 10;
 
     // Totals
@@ -260,26 +309,33 @@ export async function renderInvoicePdf(
     if (snapshot.giftWrapCost > 0) totalsRows.push(["Gift Wrap", snapshot.giftWrapCost]);
     if (snapshot.business.showTax && snapshot.taxAmount > 0) totalsRows.push(["Tax", snapshot.taxAmount]);
 
-    doc.fontSize(9).font("Helvetica").fillColor("#333");
+    doc.fontSize(9).font("Helvetica");
     for (const [label, amount] of totalsRows) {
-      doc.text(label, 380, y, { width: 100 });
-      doc.text(`${amount < 0 ? "-" : ""}${fmt(Math.abs(amount))}`, colTotal, y, { width: 75, align: "right" });
-      y += 14;
+      doc.fillColor(BRAND.muted).text(label, left + contentW - 220, y, { width: 130 });
+      doc.fillColor(BRAND.ink).text(`${amount < 0 ? "-" : ""}${fmt(amount)}`, colTotal, y, { width: 85, align: "right" });
+      y += 16;
     }
-    doc.font("Helvetica-Bold").fontSize(10).fillColor("#000");
-    doc.text("Total", 380, y, { width: 100 });
-    doc.text(fmt(snapshot.total), colTotal, y, { width: 75, align: "right" });
-    y += 20;
 
-    doc.font("Helvetica").fontSize(8).fillColor("#666").text(`Payment method: ${snapshot.paymentMethod === "cod" ? "Cash on Delivery" : "Razorpay"}`, 50, y);
-    y += 30;
+    y += 6;
+    const bandH = 42;
+    doc.roundedRect(left + contentW - 220, y, 220, bandH, 8).fill(BRAND.primaryTint);
+    doc.fontSize(9).font("Helvetica-Bold").fillColor(BRAND.muted).text("TOTAL", left + contentW - 220 + 16, y + 15, { characterSpacing: 1 });
+    doc.fontSize(18).font("Helvetica-Bold").fillColor(BRAND.primary).text(fmt(snapshot.total), left + contentW - 220, y + 11, { width: 200, align: "right" });
+    y += bandH + 22;
+
+    doc.font("Helvetica").fontSize(8).fillColor(BRAND.muted).text(`Payment method: ${snapshot.paymentMethod === "cod" ? "Cash on Delivery" : "Razorpay"}`, left, y);
+    y += 26;
+
+    doc.moveTo(left, y).lineTo(right, y).strokeColor(BRAND.border).lineWidth(1).stroke();
+    y += 14;
 
     if (snapshot.business.footer) {
-      doc.fontSize(8).fillColor("#888").text(snapshot.business.footer, 50, y, { width: 495, align: "center" });
-      y += 14;
+      doc.fontSize(9).font("Helvetica-Bold").fillColor(BRAND.ink).text(snapshot.business.footer, left, y, { width: contentW, align: "center" });
+      y += 16;
     }
     if (snapshot.business.terms) {
-      doc.fontSize(7).fillColor("#aaa").text(snapshot.business.terms, 50, y, { width: 495, align: "center" });
+      doc.fontSize(7).font("Helvetica").fillColor(BRAND.muted).text(snapshot.business.terms, left, y, { width: contentW, align: "center" });
+      y += 14;
     }
 
     doc.end();

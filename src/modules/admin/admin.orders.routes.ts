@@ -47,7 +47,7 @@ adminOrdersRouter.get("/", async (req, res, next) => {
     if (paymentStatus) query = query.eq("payment_status", paymentStatus);
 
     const pageNum = Math.max(1, Number(page) || 1);
-    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50));
+    const limitNum = Math.min(300, Math.max(1, Number(limit) || 50));
     query = query.range((pageNum - 1) * limitNum, pageNum * limitNum - 1);
 
     const { data, error, count } = await query;
