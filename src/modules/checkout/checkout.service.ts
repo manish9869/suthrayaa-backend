@@ -11,6 +11,7 @@ import {
   sendTemplatedEmail,
   renderOrderDetailsHtml,
   renderAddressHtml,
+  storeLinkVariables,
 } from "../email/email.service.js";
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
@@ -738,6 +739,7 @@ export async function markOrderFailedByRazorpayOrderId(razorpayOrderId: string) 
         order_number: order.order_number,
         order_total: orderTotal,
         store_name: "Suthrayaa",
+        ...storeLinkVariables(),
       },
       relatedOrderId: order.id,
     }).catch((err) => logger.error({ err, orderId: order.id }, "admin_payment_failed email failed"));

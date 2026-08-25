@@ -260,22 +260,24 @@ export async function sendOrderConfirmationEmail(payload: OrderEmailPayload) {
 export async function sendAdminOrderNotification(payload: OrderEmailPayload) {
   if (!env.ADMIN_NOTIFICATION_EMAIL) return;
 
-  const html = wrapEmail(
-    `New order received`,
-    `
-    ${renderOrderDetailsHtml(payload)}
-    <h2 style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${BRAND.muted};margin:24px 0 10px;">Customer</h2>
-    <p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;margin:0 0 16px;color:${BRAND.ink};">${payload.customerName} &middot; ${payload.customerEmail ?? "no email"}</p>
-    <h2 style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${BRAND.muted};margin:0 0 10px;">Ship to</h2>
-    ${addressBlock(payload.shippingAddress)}
-    <p style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${BRAND.muted};margin-top:20px;">
-      Payment: ${payload.paymentMethod === "cod" ? "Cash on Delivery" : "Paid online via Razorpay"}
-    </p>
-    `,
-    { badge: { label: "New Order", tone: "neutral" }, highlight: { label: "Order Number", value: payload.orderNumber } }
-  );
+  const itemCount = payload.items.reduce((s, i) => s + i.quantity, 0);
 
-  await send(env.ADMIN_NOTIFICATION_EMAIL, `🧶 New order ${payload.orderNumber} — ${formatPrice(payload.total)}`, html);
+  await sendTemplatedEmail({
+    type: "admin_new_order",
+    to: env.ADMIN_NOTIFICATION_EMAIL,
+    variables: {
+      order_number: payload.orderNumber,
+      order_total: formatPrice(payload.total),
+      item_count: String(itemCount),
+      customer_name: payload.customerName,
+      customer_email: payload.customerEmail ?? "no email on file",
+      ...storeLinkVariables(),
+    },
+    rawVariables: {
+      items_table: renderOrderDetailsHtml(payload),
+      address_block: addressBlock(payload.shippingAddress),
+    },
+  });
 }
 
 export function renderAddressHtml(a: OrderEmailPayload["shippingAddress"]) {
@@ -468,7 +470,7 @@ export async function resendLoggedEmail(to: string, subject: string, html: strin
 /** The store/support/social links every richer admin-editable template can reference —
  * shared by any hand-built send (like the contact form) that isn't going through the
  * per-order variable builder in admin.orders.routes.ts. */
-function storeLinkVariables(): Record<string, string> {
+export function storeLinkVariables(): Record<string, string> {
   const instagramEnabled = getSettingSync<boolean>("social.instagram_enabled");
   const facebookEnabled = getSettingSync<boolean>("social.facebook_enabled");
   return {

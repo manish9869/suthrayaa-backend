@@ -1,8 +1,551 @@
-<!-- SUBJECT: Welcome to Suthrayaa, {{customer_name}}! -->
-<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#3D2B35;margin:0 0 16px;line-height:1.7;">
-  Hi {{customer_name}}, welcome to Suthrayaa — we're so glad you're here. 💕
-</p>
-<p style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#8F7A85;line-height:1.7;margin:0 0 20px;">
-  Every piece in our shop is handmade with care, in small batches. Take a look around — we think you'll find something you love.
-</p>
-<p style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#8F7A85;">— {{store_name}}</p>
+<!-- SUBJECT: Welcome to Suthrayaa, {{customer_name}}! 💕 -->
+<!DOCTYPE html> <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <meta http-equiv="X-UA-Compatible" content="IE=edge"> <meta name="x-apple-disable-message-reformatting"> <title>Welcome to Suthrayaa 💕</title> <!--[if mso]> <noscript> <xml> <o:OfficeDocumentSettings> <o:PixelsPerInch>96</o:PixelsPerInch> </o:OfficeDocumentSettings> </xml> </noscript> <![endif]--> <style> * { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; } body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; } table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; } img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; } body { margin:0 !important; padding:0 !important; width:100% !important; background:#FFFFFF; font-family:Arial,Helvetica,sans-serif; } a { text-decoration:none; } .email-container { width:100%; max-width:640px; } @media only screen and (max-width:640px) { .email-container { width:100% !important; } .mobile-padding { padding-left:20px !important; padding-right:20px !important; } .mobile-header { padding:30px 20px 28px !important; } .mobile-title { font-size:27px !important; line-height:1.25 !important; } } </style> </head> <body> <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFFFFF;" > <tr>
+  <td align="center" style="padding:32px 12px;">
+  
+    <table
+      role="presentation"
+      class="email-container"
+      width="640"
+      cellpadding="0"
+      cellspacing="0"
+      border="0"
+      style="
+        max-width:640px;
+        width:100%;
+        background:#FFFFFF;
+        border-radius:22px;
+        overflow:hidden;
+        border:1px solid #F0DFE7;
+      "
+    >
+  
+      <!-- BRAND STRIP -->
+  
+      <tr>
+  
+        <td
+          height="6"
+          style="
+            background:#D96C8A;
+            font-size:1px;
+            line-height:1px;
+          "
+        >
+          &nbsp;
+        </td>
+  
+      </tr>
+  
+      <!-- HEADER -->
+  
+      <tr>
+  
+        <td
+          class="mobile-header"
+          align="center"
+          style="
+            background:#FFF4F7;
+            padding:38px 42px 34px;
+          "
+        >
+  
+          <p style="
+            margin:0 0 12px;
+            color:#A77BCA;
+            font-size:14px;
+            letter-spacing:7px;
+          ">
+            ✦ ✧ ✦
+          </p>
+  
+          <a href="{{store_url}}" target="_blank">
+  
+            <img
+              src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Suthraya%20Logo%20-%20Trans-HgT4V8esTeOZ2PwWy5B7QcPjLLrahf.png"
+              width="150"
+              alt="Suthrayaa"
+              style="
+                width:150px;
+                max-width:150px;
+                height:auto;
+                margin:0 auto 22px;
+                display:block;
+              "
+            >
+  
+          </a>
+  
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+  
+            <tr>
+  
+              <td style="
+                background:#FFE4EC;
+                border:1px solid #F3B6C9;
+                border-radius:50px;
+                padding:8px 18px;
+                color:#C55376;
+                font-size:10px;
+                font-weight:700;
+                letter-spacing:1.5px;
+                text-transform:uppercase;
+                white-space:nowrap;
+              ">
+                ♡ &nbsp; WELCOME TO SUTHRAYAA
+              </td>
+  
+            </tr>
+  
+          </table>
+  
+          <h1
+            class="mobile-title"
+            style="
+              margin:17px 0 10px;
+              color:#3D2B35;
+              font-size:31px;
+              line-height:1.25;
+              font-weight:800;
+              letter-spacing:-0.5px;
+            "
+          >
+            So happy you're here! 💕
+          </h1>
+  
+          <p style="
+            margin:0;
+            color:#6E5A63;
+            font-size:14px;
+            line-height:1.75;
+          ">
+            Welcome to our little handmade corner of the internet.
+          </p>
+  
+          <p style="
+            margin:20px 0 0;
+            color:#D96C8A;
+            font-size:13px;
+            letter-spacing:5px;
+          ">
+            ♡ ♡ ♡
+          </p>
+  
+        </td>
+  
+      </tr>
+  
+      <!-- INTRO -->
+  
+      <tr>
+  
+        <td
+          class="mobile-padding"
+          style="padding:32px 42px 0;"
+        >
+  
+          <p style="
+            margin:0 0 9px;
+            color:#3D2B35;
+            font-size:19px;
+            line-height:1.4;
+            font-weight:800;
+          ">
+            Hi <span style="white-space:nowrap;">{{customer_name}} 👋</span>
+          </p>
+  
+          <p style="
+            margin:0;
+            color:#6E5A63;
+            font-size:13px;
+            line-height:1.85;
+          ">
+            We're so glad you're here. Every piece in our shop is handmade with care, created in small batches, and packed with a little extra love.
+          </p>
+  
+        </td>
+  
+      </tr>
+  
+      <!-- BRAND VALUES -->
+  
+      <tr>
+  
+        <td
+          class="mobile-padding"
+          style="padding:28px 42px 0;"
+        >
+  
+          <table
+            role="presentation"
+            width="100%"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+          >
+  
+            <tr>
+  
+              <!-- HANDMADE -->
+  
+              <td
+                width="33%"
+                valign="top"
+                style="padding-right:6px;"
+              >
+  
+                <table
+                  role="presentation"
+                  width="100%"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    background:#FAF6FF;
+                    border:1px solid #EBE1F2;
+                    border-radius:14px;
+                  "
+                >
+  
+                  <tr>
+  
+                    <td align="center" style="padding:18px 7px;">
+  
+                      <p style="margin:0 0 7px;font-size:18px;">
+                        🧶
+                      </p>
+  
+                      <p style="
+                        margin:0;
+                        color:#4B3945;
+                        font-size:10px;
+                        font-weight:700;
+                      ">
+                        Handmade
+                      </p>
+  
+                    </td>
+  
+                  </tr>
+  
+                </table>
+  
+              </td>
+  
+              <!-- SMALL BATCHES -->
+  
+              <td
+                width="33%"
+                valign="top"
+                style="padding:0 3px;"
+              >
+  
+                <table
+                  role="presentation"
+                  width="100%"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    background:#FFF8F5;
+                    border:1px solid #F3E4DC;
+                    border-radius:14px;
+                  "
+                >
+  
+                  <tr>
+  
+                    <td align="center" style="padding:18px 7px;">
+  
+                      <p style="margin:0 0 7px;font-size:18px;">
+                        ✨
+                      </p>
+  
+                      <p style="
+                        margin:0;
+                        color:#4B3945;
+                        font-size:10px;
+                        font-weight:700;
+                      ">
+                        Small Batches
+                      </p>
+  
+                    </td>
+  
+                  </tr>
+  
+                </table>
+  
+              </td>
+  
+              <!-- LOVE -->
+  
+              <td
+                width="33%"
+                valign="top"
+                style="padding-left:6px;"
+              >
+  
+                <table
+                  role="presentation"
+                  width="100%"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    background:#FFF4F7;
+                    border:1px solid #F4DFE7;
+                    border-radius:14px;
+                  "
+                >
+  
+                  <tr>
+  
+                    <td align="center" style="padding:18px 7px;">
+  
+                      <p style="margin:0 0 7px;font-size:18px;">
+                        💕
+                      </p>
+  
+                      <p style="
+                        margin:0;
+                        color:#4B3945;
+                        font-size:10px;
+                        font-weight:700;
+                      ">
+                        Made With Love
+                      </p>
+  
+                    </td>
+  
+                  </tr>
+  
+                </table>
+  
+              </td>
+  
+            </tr>
+  
+          </table>
+  
+        </td>
+  
+      </tr>
+  
+      <!-- CTA -->
+  
+      <tr>
+  
+        <td
+          class="mobile-padding"
+          align="center"
+          style="padding:33px 42px 38px;"
+        >
+  
+          <p style="
+            margin:0 0 18px;
+            color:#6E5A63;
+            font-size:12px;
+            line-height:1.6;
+          ">
+            Ready to find something made just for you? ✨
+          </p>
+  
+          <table
+            role="presentation"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            align="center"
+          >
+  
+            <tr>
+  
+              <td style="
+                background:#D96C8A;
+                border-radius:11px;
+                box-shadow:0 5px 12px rgba(217,108,138,0.18);
+              ">
+  
+                <a
+                  href="{{store_url}}"
+                  target="_blank"
+                  style="
+                    display:inline-block;
+                    padding:15px 32px;
+                    color:#FFFFFF;
+                    font-size:13px;
+                    font-weight:700;
+                    letter-spacing:0.2px;
+                  "
+                >
+                  Explore Suthrayaa &nbsp;→
+                </a>
+  
+              </td>
+  
+            </tr>
+  
+          </table>
+  
+          <p style="
+            margin:17px 0 0;
+            color:#A5949E;
+            font-size:10px;
+            line-height:1.6;
+          ">
+            We can't wait to create something special for you.
+          </p>
+  
+        </td>
+  
+      </tr>
+  
+      <!-- BRAND MESSAGE -->
+  
+      <tr>
+  
+        <td
+          align="center"
+          style="
+            background:#FFF0F4;
+            border-top:1px solid #F4DFE7;
+            border-bottom:1px solid #F4DFE7;
+            padding:19px 25px;
+          "
+        >
+  
+          <p style="
+            margin:0 0 5px;
+            color:#B95D79;
+            font-size:11px;
+            font-weight:700;
+          ">
+            Made with love, just for you 💕
+          </p>
+  
+          <p style="
+            margin:0;
+            color:#8A7680;
+            font-size:10px;
+            line-height:1.6;
+          ">
+            Handmade &nbsp; ✦ &nbsp;
+            Small batches &nbsp; ✦ &nbsp;
+            Big love
+          </p>
+  
+        </td>
+  
+      </tr>
+  
+      <!-- FOOTER -->
+  
+      <tr>
+  
+        <td
+          align="center"
+          style="
+            background:#3D2B35;
+            padding:30px 42px;
+          "
+        >
+  
+          <p style="
+            margin:0 0 15px;
+            color:#E7B4C5;
+            font-size:12px;
+            letter-spacing:5px;
+          ">
+            ✦ ♡ ✦
+          </p>
+  
+          <a href="{{store_url}}" target="_blank">
+  
+            <img
+              src="https://uvctijaxxvddtzuqivse.supabase.co/storage/v1/object/public/hero-media/branding/suthrayaa-logo-white.png"
+              width="92"
+              alt="Suthrayaa"
+              style="
+                width:92px;
+                max-width:92px;
+                height:auto;
+                margin:0 auto 12px;
+                display:block;
+              "
+            >
+  
+          </a>
+  
+          <p style="
+            margin:0 0 7px;
+            color:#F8E8EE;
+            font-size:11px;
+            font-weight:700;
+          ">
+            {{store_name}}
+          </p>
+  
+          <p style="
+            margin:0 0 14px;
+            color:#BDAAB2;
+            font-size:10px;
+            line-height:1.7;
+          ">
+            Handmade pieces, made with love. 🧶
+          </p>
+  
+          <p style="
+            margin:0;
+            font-size:10px;
+            line-height:1.8;
+          ">
+  
+            <a
+              href="{{store_url}}"
+              target="_blank"
+              style="color:#E3B9C7;"
+            >
+              Shop
+            </a>
+  
+            &nbsp;&nbsp;·&nbsp;&nbsp;
+  
+            <a
+              href="{{support_url}}"
+              target="_blank"
+              style="color:#E3B9C7;"
+            >
+              Help
+            </a>
+  
+            &nbsp;&nbsp;·&nbsp;&nbsp;
+  
+            <a
+              href="{{contact_url}}"
+              target="_blank"
+              style="color:#E3B9C7;"
+            >
+              Contact
+            </a>
+  
+          </p>
+  
+          <p style="
+            margin:17px 0 0;
+            color:#A5949E;
+            font-size:9px;
+            line-height:1.6;
+          ">
+            © {{current_year}} {{store_name}}.
+            All rights reserved.
+          </p>
+  
+        </td>
+  
+      </tr>
+  
+    </table>
+  
+  </td>
+  
+  </tr> </table> </body> </html>

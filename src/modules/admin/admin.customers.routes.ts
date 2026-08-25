@@ -4,7 +4,7 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
-import { sendTemplatedEmail } from "../email/email.service.js";
+import { sendTemplatedEmail, storeLinkVariables } from "../email/email.service.js";
 
 export const adminCustomersRouter = Router();
 adminCustomersRouter.use(authenticate, requireAdmin);
@@ -128,6 +128,7 @@ adminCustomersRouter.post("/:id/send-welcome-email", requirePermission("customer
       variables: {
         customer_name: `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim() || "there",
         store_name: "Suthrayaa",
+        ...storeLinkVariables(),
       },
     });
     res.json({ ok: true });
