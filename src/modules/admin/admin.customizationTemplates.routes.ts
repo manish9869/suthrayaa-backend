@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
@@ -9,11 +10,12 @@ import { HttpError } from "../../lib/httpError.js";
 // Reusable customization templates (e.g. "Standard Crochet Colors") — an authoring
 // convenience only. Attaching one to a product CLONES its values into that product's
 // own product_customizations/customization_values rows, which the admin can then edit
-// independently; there is no live link back to the template after cloning.
+// independently; there is no live link back to the template after cloning. Gated under
+// `products.*` — this is product-authoring tooling, not a distinct resource of its own.
 export const adminCustomizationTemplatesRouter = Router();
 adminCustomizationTemplatesRouter.use(authenticate, requireAdmin);
 
-adminCustomizationTemplatesRouter.get("/", async (_req, res, next) => {
+adminCustomizationTemplatesRouter.get("/", requirePermission("products.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("customization_templates")
@@ -51,7 +53,7 @@ const templateSchema = z.object({
     .default([]),
 });
 
-adminCustomizationTemplatesRouter.post("/", validate(templateSchema), async (req, res, next) => {
+adminCustomizationTemplatesRouter.post("/", requirePermission("products.update"), validate(templateSchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof templateSchema>;
     const { data: template, error } = await supabaseAdmin
@@ -79,7 +81,7 @@ adminCustomizationTemplatesRouter.post("/", validate(templateSchema), async (req
   }
 });
 
-adminCustomizationTemplatesRouter.delete("/:id", async (req, res, next) => {
+adminCustomizationTemplatesRouter.delete("/:id", requirePermission("products.update"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin.from("customization_templates").delete().eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
@@ -94,6 +96,7 @@ const cloneSchema = z.object({ productId: z.string().uuid() });
 
 adminCustomizationTemplatesRouter.post(
   "/:id/clone",
+  requirePermission("products.update"),
   validate(cloneSchema),
   async (req, res, next) => {
     try {

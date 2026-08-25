@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
@@ -37,7 +38,7 @@ function toTemplateDTO(row: any) {
   };
 }
 
-adminEmailTemplatesRouter.get("/", async (_req, res, next) => {
+adminEmailTemplatesRouter.get("/", requirePermission("emails.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("email_templates").select("*").order("type");
     if (error) throw HttpError.internal(error.message);
@@ -53,7 +54,7 @@ const templateUpdateSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
-adminEmailTemplatesRouter.patch("/:id", validate(templateUpdateSchema), async (req, res, next) => {
+adminEmailTemplatesRouter.patch("/:id", requirePermission("emails.update"), validate(templateUpdateSchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof templateUpdateSchema>;
     const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -70,7 +71,7 @@ adminEmailTemplatesRouter.patch("/:id", validate(templateUpdateSchema), async (r
   }
 });
 
-adminEmailTemplatesRouter.post("/:id/preview", async (req, res, next) => {
+adminEmailTemplatesRouter.post("/:id/preview", requirePermission("emails.view"), async (req, res, next) => {
   try {
     const { data: template } = await supabaseAdmin.from("email_templates").select("*").eq("id", req.params.id).maybeSingle();
     if (!template) throw HttpError.notFound("Template not found");
@@ -84,7 +85,7 @@ adminEmailTemplatesRouter.post("/:id/preview", async (req, res, next) => {
 });
 
 const testSendSchema = z.object({ to: z.string().email() });
-adminEmailTemplatesRouter.post("/:id/test-send", validate(testSendSchema), async (req, res, next) => {
+adminEmailTemplatesRouter.post("/:id/test-send", requirePermission("emails.update"), validate(testSendSchema), async (req, res, next) => {
   try {
     const { to } = req.body as z.infer<typeof testSendSchema>;
     const { data: template } = await supabaseAdmin.from("email_templates").select("*").eq("id", req.params.id).maybeSingle();
@@ -101,7 +102,7 @@ adminEmailTemplatesRouter.post("/:id/test-send", validate(testSendSchema), async
 
 // ---- Logs ----
 
-adminEmailLogsRouter.get("/", async (req, res, next) => {
+adminEmailLogsRouter.get("/", requirePermission("emails.view"), async (req, res, next) => {
   try {
     const { status, type, page = "1", limit = "50" } = req.query as Record<string, string>;
     let query = supabaseAdmin.from("email_logs").select("*", { count: "exact" }).order("sent_at", { ascending: false });
@@ -134,7 +135,7 @@ adminEmailLogsRouter.get("/", async (req, res, next) => {
   }
 });
 
-adminEmailLogsRouter.post("/:id/retry", async (req, res, next) => {
+adminEmailLogsRouter.post("/:id/retry", requirePermission("emails.update"), async (req, res, next) => {
   try {
     const { data: log, error } = await supabaseAdmin.from("email_logs").select("*").eq("id", req.params.id).maybeSingle();
     if (error) throw HttpError.internal(error.message);

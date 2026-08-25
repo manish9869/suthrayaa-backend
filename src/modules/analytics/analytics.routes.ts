@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission, requireAnyPermission } from "../../middleware/requirePermission.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 
@@ -82,7 +83,7 @@ const ORDER_STATUSES = [
   "partially_refunded",
 ] as const;
 
-analyticsRouter.get("/summary", async (req, res, next) => {
+analyticsRouter.get("/summary", requirePermission("analytics.view"), async (req, res, next) => {
   try {
     const { since, until, prevSince, prevUntil } = resolveRange(req);
 
@@ -152,7 +153,7 @@ analyticsRouter.get("/summary", async (req, res, next) => {
   }
 });
 
-analyticsRouter.get("/revenue", async (req, res, next) => {
+analyticsRouter.get("/revenue", requirePermission("analytics.view"), async (req, res, next) => {
   try {
     const { since, until } = resolveRange(req);
     const { data, error } = await supabaseAdmin
@@ -179,7 +180,7 @@ analyticsRouter.get("/revenue", async (req, res, next) => {
   }
 });
 
-analyticsRouter.get("/orders-series", async (req, res, next) => {
+analyticsRouter.get("/orders-series", requirePermission("analytics.view"), async (req, res, next) => {
   try {
     const { since, until } = resolveRange(req);
     const { data, error } = await supabaseAdmin.from("orders").select("created_at").gte("created_at", since).lte("created_at", until);
@@ -196,7 +197,7 @@ analyticsRouter.get("/orders-series", async (req, res, next) => {
   }
 });
 
-analyticsRouter.get("/customers-series", async (req, res, next) => {
+analyticsRouter.get("/customers-series", requirePermission("analytics.view"), async (req, res, next) => {
   try {
     const { since, until } = resolveRange(req);
     const { data, error } = await supabaseAdmin
@@ -217,7 +218,7 @@ analyticsRouter.get("/customers-series", async (req, res, next) => {
   }
 });
 
-analyticsRouter.get("/transactions-breakdown", async (req, res, next) => {
+analyticsRouter.get("/transactions-breakdown", requirePermission("analytics.view"), async (req, res, next) => {
   try {
     const { since, until } = resolveRange(req);
     const { data, error } = await supabaseAdmin
@@ -248,7 +249,7 @@ analyticsRouter.get("/transactions-breakdown", async (req, res, next) => {
   }
 });
 
-analyticsRouter.get("/order-status-breakdown", async (req, res, next) => {
+analyticsRouter.get("/order-status-breakdown", requirePermission("analytics.view"), async (req, res, next) => {
   try {
     const { since, until } = resolveRange(req);
     const { data, error } = await supabaseAdmin.from("orders").select("status").gte("created_at", since).lte("created_at", until);
@@ -266,7 +267,7 @@ analyticsRouter.get("/order-status-breakdown", async (req, res, next) => {
   }
 });
 
-analyticsRouter.get("/inventory-summary", async (_req, res, next) => {
+analyticsRouter.get("/inventory-summary", requireAnyPermission("analytics.view", "inventory.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("products").select("stock, price, status, low_stock_threshold, is_active");
     if (error) throw HttpError.internal(error.message);
@@ -297,7 +298,7 @@ analyticsRouter.get("/inventory-summary", async (_req, res, next) => {
   }
 });
 
-analyticsRouter.get("/top-products", async (req, res, next) => {
+analyticsRouter.get("/top-products", requirePermission("analytics.view"), async (req, res, next) => {
   try {
     const limit = Number(req.query.limit ?? 10);
     const hasRange = Boolean(req.query.days || (req.query.from && req.query.to));
@@ -354,7 +355,7 @@ analyticsRouter.get("/top-products", async (req, res, next) => {
   }
 });
 
-analyticsRouter.get("/customization-popularity", async (_req, res, next) => {
+analyticsRouter.get("/customization-popularity", requirePermission("analytics.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("order_items").select("custom_text");
     if (error) throw HttpError.internal(error.message);
@@ -366,7 +367,7 @@ analyticsRouter.get("/customization-popularity", async (_req, res, next) => {
   }
 });
 
-analyticsRouter.get("/stock-alerts", async (_req, res, next) => {
+analyticsRouter.get("/stock-alerts", requireAnyPermission("analytics.view", "inventory.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("products")

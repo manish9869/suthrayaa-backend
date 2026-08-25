@@ -25,6 +25,10 @@ import { couponsRouter } from "./modules/coupons/coupons.routes.js";
 import { contactRouter } from "./modules/contact/contact.routes.js";
 
 import { adminMeRouter } from "./modules/admin/admin.me.routes.js";
+import { adminInvitesRouter } from "./modules/admin/admin.invites.routes.js";
+import { adminUsersRouter } from "./modules/admin/admin.users.routes.js";
+import { adminRolesRouter, adminPermissionsRouter } from "./modules/admin/admin.roles.routes.js";
+import { adminAuditLogsRouter } from "./modules/admin/admin.auditLogs.routes.js";
 import { adminProductsRouter } from "./modules/admin/admin.products.routes.js";
 import {
   adminCategoriesRouter,
@@ -56,6 +60,10 @@ export function createApp() {
 
   app.use(express.json({ limit: "2mb" }));
   app.use(express.urlencoded({ extended: true }));
+
+  // Public, unauthenticated by design — see admin.invites.routes.ts. Mounted before every
+  // other /api/admin/* router, none of which allow unauthenticated access.
+  app.use("/api/admin/invites", adminInvitesRouter);
 
   app.get("/api/health", async (_req, res) => {
     const { data, error } = await supabaseAdmin.from("categories").select("id").limit(1);
@@ -97,6 +105,10 @@ export function createApp() {
   app.use("/api/admin/emails/logs", adminEmailLogsRouter);
   app.use("/api/admin/settings/invoice", adminInvoiceSettingsRouter);
   app.use("/api/admin/analytics", analyticsRouter);
+  app.use("/api/admin/users", adminUsersRouter);
+  app.use("/api/admin/roles", adminRolesRouter);
+  app.use("/api/admin/permissions", adminPermissionsRouter);
+  app.use("/api/admin/audit-logs", adminAuditLogsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

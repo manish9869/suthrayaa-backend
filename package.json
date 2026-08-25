@@ -11,7 +11,10 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "seed": "tsx scripts/seed-from-legacy-data.ts",
+    "seed:rbac": "tsx scripts/seed-rbac.ts",
+    "migrate:admin-roles": "tsx scripts/migrate-admin-roles.ts",
     "seed:categories": "tsx scripts/seed-categories.ts",
     "seed:catalog": "tsx scripts/reseed-real-catalog.ts",
     "setup:storage": "tsx scripts/setup-storage.ts",
@@ -55,6 +58,7 @@
     "@types/ws": "^8.5.12",
     "pino-pretty": "^11.2.2",
     "tsx": "^4.19.1",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.4"
   }
 }

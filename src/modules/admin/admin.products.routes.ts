@@ -2,9 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
+import { can } from "../../modules/rbac/rbac.service.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
+import { logAudit } from "../rbac/audit.service.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { imageUpload, uploadProductImage, deleteStorageObject, BUCKETS } from "../storage/upload.js";
 import { generateUniqueSlug, isSlugTaken } from "../../lib/slug.js";
@@ -12,7 +15,7 @@ import { generateUniqueSlug, isSlugTaken } from "../../lib/slug.js";
 export const adminProductsRouter = Router();
 adminProductsRouter.use(authenticate, requireAdmin);
 
-adminProductsRouter.get("/", async (req, res, next) => {
+adminProductsRouter.get("/", requirePermission("products.view"), async (req, res, next) => {
   try {
     const { page = "1", limit = "50", search } = req.query as Record<string, string>;
     let query = supabaseAdmin
@@ -42,7 +45,7 @@ adminProductsRouter.get("/", async (req, res, next) => {
   }
 });
 
-adminProductsRouter.get("/:id", async (req, res, next) => {
+adminProductsRouter.get("/:id", requirePermission("products.view"), async (req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("products")
@@ -170,9 +173,14 @@ async function syncProductCategories(productId: string, categoryId: string | nul
   if (rows.length) await supabaseAdmin.from("product_categories").insert(rows);
 }
 
-adminProductsRouter.post("/", validate(productSchema), async (req, res, next) => {
+adminProductsRouter.post("/", requirePermission("products.create"), validate(productSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof productSchema>;
+
+    const status = body.status ?? (body.isActive === false ? "archived" : "active");
+    if (isActiveForStatus(status) && !can(req.rbac!, "products.publish")) {
+      throw HttpError.forbidden("You do not have permission to publish products.");
+    }
 
     if (body.sku) {
       const { data: existingSku } = await supabaseAdmin.from("products").select("id").eq("sku", body.sku).maybeSingle();
@@ -183,8 +191,6 @@ adminProductsRouter.post("/", validate(productSchema), async (req, res, next) =>
       throw HttpError.badRequest(`The slug "${body.slug}" is already in use by another product`);
     }
     const slug = body.slug || (await generateUniqueSlug("products", body.name));
-
-    const status = body.status ?? (body.isActive === false ? "archived" : "active");
 
     const { data: product, error } = await supabaseAdmin
       .from("products")
@@ -249,15 +255,28 @@ adminProductsRouter.post("/", validate(productSchema), async (req, res, next) =>
     }
 
     const { data: full } = await supabaseAdmin.from("products").select(PRODUCT_SELECT).eq("id", product.id).single();
+    await logAudit({
+      userId: req.admin!.id,
+      action: "PRODUCT_CREATED",
+      resource: "products",
+      resourceId: product.id,
+      permission: "products.create",
+      req,
+    });
     res.status(201).json({ ...toProductDTO(full, { includeDisabledCustomizations: true, admin: true }), isActive: full.is_active });
   } catch (err) {
     next(err);
   }
 });
 
-adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req, res, next) => {
+adminProductsRouter.patch("/:id", requirePermission("products.update"), validate(productSchema.partial()), async (req, res, next) => {
   try {
     const body = req.body as Partial<z.infer<typeof productSchema>>;
+    const wantsLive =
+      (body.status !== undefined && isActiveForStatus(body.status)) || body.isActive === true;
+    if (wantsLive && !can(req.rbac!, "products.publish")) {
+      throw HttpError.forbidden("You do not have permission to publish products.");
+    }
     const patch: Record<string, unknown> = {};
     if (body.sku !== undefined) {
       if (body.sku && (await isSlugTaken("products", body.sku, req.params.id))) {
@@ -350,6 +369,15 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
       .maybeSingle();
     if (fetchErr) throw HttpError.internal(fetchErr.message);
     if (!full) throw HttpError.notFound("Product not found");
+    await logAudit({
+      userId: req.admin!.id,
+      action: "PRODUCT_UPDATED",
+      resource: "products",
+      resourceId: req.params.id,
+      permission: "products.update",
+      metadata: { fields: Object.keys(patch) },
+      req,
+    });
     res.json({ ...toProductDTO(full, { includeDisabledCustomizations: true, admin: true }), isActive: full.is_active });
   } catch (err) {
     next(err);
@@ -358,7 +386,7 @@ adminProductsRouter.patch("/:id", validate(productSchema.partial()), async (req,
 
 // Duplicate an existing product — new SKU/slug required, everything else copied
 // (images, customizations, and category assignment are NOT copied; admin fills those in).
-adminProductsRouter.post("/:id/duplicate", async (req, res, next) => {
+adminProductsRouter.post("/:id/duplicate", requirePermission("products.create"), async (req, res, next) => {
   try {
     const { data: source, error } = await supabaseAdmin.from("products").select("*").eq("id", req.params.id).maybeSingle();
     if (error) throw HttpError.internal(error.message);
@@ -387,10 +415,18 @@ adminProductsRouter.post("/:id/duplicate", async (req, res, next) => {
 
 // Soft delete — keeps order history (order_items keeps a snapshot regardless) and simply
 // removes the product from public catalog reads via is_active/status.
-adminProductsRouter.delete("/:id", async (req, res, next) => {
+adminProductsRouter.delete("/:id", requirePermission("products.delete"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin.from("products").update({ is_active: false, status: "archived" }).eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
+    await logAudit({
+      userId: req.admin!.id,
+      action: "PRODUCT_DELETED",
+      resource: "products",
+      resourceId: req.params.id,
+      permission: "products.delete",
+      req,
+    });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -399,7 +435,7 @@ adminProductsRouter.delete("/:id", async (req, res, next) => {
 
 // ---- Images ----
 
-adminProductsRouter.post("/:id/images", imageUpload.single("image"), async (req, res, next) => {
+adminProductsRouter.post("/:id/images", requirePermission("product_images.manage"), imageUpload.single("image"), async (req, res, next) => {
   try {
     if (!req.file) throw HttpError.badRequest("No image uploaded");
     const { url, thumbnailUrl } = await uploadProductImage(BUCKETS.productImages, req.params.id, req.file.buffer);
@@ -428,7 +464,7 @@ adminProductsRouter.post("/:id/images", imageUpload.single("image"), async (req,
   }
 });
 
-adminProductsRouter.delete("/:id/images/:imageId", async (req, res, next) => {
+adminProductsRouter.delete("/:id/images/:imageId", requirePermission("product_images.manage"), async (req, res, next) => {
   try {
     const { data: image } = await supabaseAdmin
       .from("product_images")
@@ -462,6 +498,7 @@ const customizationRulesSchema = z.object({
 
 adminProductsRouter.patch(
   "/:id/customization-rules",
+  requirePermission("products.update"),
   validate(customizationRulesSchema),
   async (req, res, next) => {
     try {
@@ -522,6 +559,7 @@ async function respondWithFullProduct(res: import("express").Response, productId
 
 adminProductsRouter.post(
   "/:id/customizations",
+  requirePermission("products.update"),
   validate(customizationGroupSchema),
   async (req, res, next) => {
     try {
@@ -550,6 +588,7 @@ adminProductsRouter.post(
 
 adminProductsRouter.patch(
   "/:id/customizations/:customizationId",
+  requirePermission("products.update"),
   validate(customizationGroupSchema.partial()),
   async (req, res, next) => {
     try {
@@ -581,7 +620,7 @@ adminProductsRouter.patch(
 
 // Deletion is always safe historically: orders/cart store a resolved JSON snapshot,
 // not a foreign key, so removing a group never corrupts past order data.
-adminProductsRouter.delete("/:id/customizations/:customizationId", async (req, res, next) => {
+adminProductsRouter.delete("/:id/customizations/:customizationId", requirePermission("products.update"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin
       .from("product_customizations")
@@ -606,6 +645,7 @@ const customizationValueSchema = z.object({
 
 adminProductsRouter.post(
   "/:id/customizations/:customizationId/values",
+  requirePermission("products.update"),
   validate(customizationValueSchema),
   async (req, res, next) => {
     try {
@@ -633,6 +673,7 @@ adminProductsRouter.post(
 
 adminProductsRouter.patch(
   "/:id/customizations/:customizationId/values/:valueId",
+  requirePermission("products.update"),
   validate(customizationValueSchema.partial()),
   async (req, res, next) => {
     try {
@@ -669,7 +710,7 @@ adminProductsRouter.patch(
   }
 );
 
-adminProductsRouter.delete("/:id/customizations/:customizationId/values/:valueId", async (req, res, next) => {
+adminProductsRouter.delete("/:id/customizations/:customizationId/values/:valueId", requirePermission("products.update"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin
       .from("customization_values")

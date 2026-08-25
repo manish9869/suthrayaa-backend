@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
@@ -9,7 +10,9 @@ import { generateUniqueSlug, isSlugTaken } from "../../lib/slug.js";
 
 // Categories, colors, testimonials, and hero slides are all simple, low-volume CRUD
 // resources with the same shape of admin needs — kept in one file rather than four
-// near-identical route/controller/service triads.
+// near-identical route/controller/service triads. Testimonials are gated under the
+// `content.*` permission group and hero slides under `banners.*` — the closest real
+// resources to the spec's generic "content"/"banners" naming.
 
 export const adminCategoriesRouter = Router();
 export const adminColorsRouter = Router();
@@ -75,7 +78,7 @@ async function wouldCreateCycle(id: string, candidateParentId: string): Promise<
   return false;
 }
 
-adminCategoriesRouter.get("/", async (_req, res, next) => {
+adminCategoriesRouter.get("/", requirePermission("categories.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("categories").select("*").order("sort_order");
     if (error) throw HttpError.internal(error.message);
@@ -85,7 +88,7 @@ adminCategoriesRouter.get("/", async (_req, res, next) => {
   }
 });
 
-adminCategoriesRouter.post("/", validate(categorySchema), async (req, res, next) => {
+adminCategoriesRouter.post("/", requirePermission("categories.create"), validate(categorySchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof categorySchema>;
     if (b.parentId) {
@@ -123,7 +126,7 @@ adminCategoriesRouter.post("/", validate(categorySchema), async (req, res, next)
   }
 });
 
-adminCategoriesRouter.patch("/:id", validate(categorySchema.partial()), async (req, res, next) => {
+adminCategoriesRouter.patch("/:id", requirePermission("categories.update"), validate(categorySchema.partial()), async (req, res, next) => {
   try {
     const b = req.body as Partial<z.infer<typeof categorySchema>>;
     const update: Record<string, unknown> = {};
@@ -166,7 +169,7 @@ adminCategoriesRouter.patch("/:id", validate(categorySchema.partial()), async (r
 });
 
 const reorderSchema = z.object({ items: z.array(z.object({ id: z.string().uuid(), sortOrder: z.number().int() })) });
-adminCategoriesRouter.patch("/reorder", validate(reorderSchema), async (req, res, next) => {
+adminCategoriesRouter.patch("/reorder", requirePermission("categories.update"), validate(reorderSchema), async (req, res, next) => {
   try {
     const { items } = req.body as z.infer<typeof reorderSchema>;
     for (const item of items) {
@@ -180,7 +183,7 @@ adminCategoriesRouter.patch("/reorder", validate(reorderSchema), async (req, res
 });
 
 /** What deleting this category would affect — direct children and products assigned to it. */
-adminCategoriesRouter.get("/:id/impact", async (req, res, next) => {
+adminCategoriesRouter.get("/:id/impact", requirePermission("categories.view"), async (req, res, next) => {
   try {
     const { data: children } = await supabaseAdmin
       .from("categories")
@@ -201,7 +204,7 @@ const deleteCategorySchema = z.object({
   reassignTo: z.string().uuid().optional(),
   force: z.boolean().optional(),
 });
-adminCategoriesRouter.delete("/:id", validate(deleteCategorySchema), async (req, res, next) => {
+adminCategoriesRouter.delete("/:id", requirePermission("categories.delete"), validate(deleteCategorySchema), async (req, res, next) => {
   try {
     const { reassignTo, force } = req.body as z.infer<typeof deleteCategorySchema>;
 
@@ -257,7 +260,7 @@ const colorSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-adminColorsRouter.get("/", async (_req, res, next) => {
+adminColorsRouter.get("/", requirePermission("colors.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("colors").select("*").order("sort_order");
     if (error) throw HttpError.internal(error.message);
@@ -267,7 +270,7 @@ adminColorsRouter.get("/", async (_req, res, next) => {
   }
 });
 
-adminColorsRouter.post("/", validate(colorSchema), async (req, res, next) => {
+adminColorsRouter.post("/", requirePermission("colors.create"), validate(colorSchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof colorSchema>;
     const { data, error } = await supabaseAdmin
@@ -282,7 +285,7 @@ adminColorsRouter.post("/", validate(colorSchema), async (req, res, next) => {
   }
 });
 
-adminColorsRouter.patch("/:id", validate(colorSchema.partial()), async (req, res, next) => {
+adminColorsRouter.patch("/:id", requirePermission("colors.update"), validate(colorSchema.partial()), async (req, res, next) => {
   try {
     const b = req.body as Partial<z.infer<typeof colorSchema>>;
     const { data, error } = await supabaseAdmin
@@ -299,7 +302,7 @@ adminColorsRouter.patch("/:id", validate(colorSchema.partial()), async (req, res
   }
 });
 
-adminColorsRouter.delete("/:id", async (req, res, next) => {
+adminColorsRouter.delete("/:id", requirePermission("colors.delete"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin.from("colors").update({ is_active: false }).eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
@@ -322,7 +325,7 @@ const testimonialSchema = z.object({
   sortOrder: z.number().int().optional(),
 });
 
-adminTestimonialsRouter.get("/", async (_req, res, next) => {
+adminTestimonialsRouter.get("/", requirePermission("content.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("testimonials").select("*").order("sort_order");
     if (error) throw HttpError.internal(error.message);
@@ -332,7 +335,7 @@ adminTestimonialsRouter.get("/", async (_req, res, next) => {
   }
 });
 
-adminTestimonialsRouter.post("/", validate(testimonialSchema), async (req, res, next) => {
+adminTestimonialsRouter.post("/", requirePermission("content.create"), validate(testimonialSchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof testimonialSchema>;
     const { data, error } = await supabaseAdmin
@@ -356,7 +359,7 @@ adminTestimonialsRouter.post("/", validate(testimonialSchema), async (req, res, 
   }
 });
 
-adminTestimonialsRouter.patch("/:id", validate(testimonialSchema.partial()), async (req, res, next) => {
+adminTestimonialsRouter.patch("/:id", requirePermission("content.update"), validate(testimonialSchema.partial()), async (req, res, next) => {
   try {
     const b = req.body as Partial<z.infer<typeof testimonialSchema>>;
     const { data, error } = await supabaseAdmin
@@ -382,7 +385,7 @@ adminTestimonialsRouter.patch("/:id", validate(testimonialSchema.partial()), asy
   }
 });
 
-adminTestimonialsRouter.delete("/:id", async (req, res, next) => {
+adminTestimonialsRouter.delete("/:id", requirePermission("content.delete"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin.from("testimonials").delete().eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
@@ -406,7 +409,7 @@ const heroSlideSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-adminHeroSlidesRouter.get("/", async (_req, res, next) => {
+adminHeroSlidesRouter.get("/", requirePermission("banners.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("hero_slides").select("*").order("sort_order");
     if (error) throw HttpError.internal(error.message);
@@ -416,7 +419,7 @@ adminHeroSlidesRouter.get("/", async (_req, res, next) => {
   }
 });
 
-adminHeroSlidesRouter.post("/", validate(heroSlideSchema), async (req, res, next) => {
+adminHeroSlidesRouter.post("/", requirePermission("banners.create"), validate(heroSlideSchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof heroSlideSchema>;
     const { data, error } = await supabaseAdmin
@@ -441,7 +444,7 @@ adminHeroSlidesRouter.post("/", validate(heroSlideSchema), async (req, res, next
   }
 });
 
-adminHeroSlidesRouter.patch("/:id", validate(heroSlideSchema.partial()), async (req, res, next) => {
+adminHeroSlidesRouter.patch("/:id", requirePermission("banners.update"), validate(heroSlideSchema.partial()), async (req, res, next) => {
   try {
     const b = req.body as Partial<z.infer<typeof heroSlideSchema>>;
     const { data, error } = await supabaseAdmin
@@ -468,7 +471,7 @@ adminHeroSlidesRouter.patch("/:id", validate(heroSlideSchema.partial()), async (
   }
 });
 
-adminHeroSlidesRouter.delete("/:id", async (req, res, next) => {
+adminHeroSlidesRouter.delete("/:id", requirePermission("banners.delete"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin.from("hero_slides").delete().eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);

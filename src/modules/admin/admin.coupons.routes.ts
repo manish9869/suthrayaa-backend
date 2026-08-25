@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
@@ -9,7 +10,7 @@ import { HttpError } from "../../lib/httpError.js";
 export const adminCouponsRouter = Router();
 adminCouponsRouter.use(authenticate, requireAdmin);
 
-adminCouponsRouter.get("/", async (_req, res, next) => {
+adminCouponsRouter.get("/", requirePermission("coupons.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("coupons").select("*").order("created_at", { ascending: false });
     if (error) throw HttpError.internal(error.message);
@@ -31,7 +32,7 @@ const couponSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-adminCouponsRouter.post("/", validate(couponSchema), async (req, res, next) => {
+adminCouponsRouter.post("/", requirePermission("coupons.create"), validate(couponSchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof couponSchema>;
     const { data, error } = await supabaseAdmin
@@ -56,7 +57,7 @@ adminCouponsRouter.post("/", validate(couponSchema), async (req, res, next) => {
   }
 });
 
-adminCouponsRouter.patch("/:id", validate(couponSchema.partial()), async (req, res, next) => {
+adminCouponsRouter.patch("/:id", requirePermission("coupons.update"), validate(couponSchema.partial()), async (req, res, next) => {
   try {
     const b = req.body as Partial<z.infer<typeof couponSchema>>;
     const { data, error } = await supabaseAdmin
@@ -83,7 +84,7 @@ adminCouponsRouter.patch("/:id", validate(couponSchema.partial()), async (req, r
   }
 });
 
-adminCouponsRouter.delete("/:id", async (req, res, next) => {
+adminCouponsRouter.delete("/:id", requirePermission("coupons.delete"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin.from("coupons").update({ is_active: false }).eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);

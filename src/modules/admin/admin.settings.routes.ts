@@ -2,9 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
+import { logAudit } from "../rbac/audit.service.js";
 
 export const adminInvoiceSettingsRouter = Router();
 adminInvoiceSettingsRouter.use(authenticate, requireAdmin);
@@ -27,7 +29,7 @@ function toDTO(row: any) {
   };
 }
 
-adminInvoiceSettingsRouter.get("/", async (_req, res, next) => {
+adminInvoiceSettingsRouter.get("/", requirePermission("settings.view"), async (_req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin.from("invoice_settings").select("*").eq("id", 1).single();
     if (error) throw HttpError.internal(error.message);
@@ -53,7 +55,7 @@ const settingsSchema = z.object({
   showCustomizationPricing: z.boolean().optional(),
 });
 
-adminInvoiceSettingsRouter.patch("/", validate(settingsSchema), async (req, res, next) => {
+adminInvoiceSettingsRouter.patch("/", requirePermission("settings.update"), validate(settingsSchema), async (req, res, next) => {
   try {
     const b = req.body as z.infer<typeof settingsSchema>;
     const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -73,6 +75,15 @@ adminInvoiceSettingsRouter.patch("/", validate(settingsSchema), async (req, res,
 
     const { data, error } = await supabaseAdmin.from("invoice_settings").update(update).eq("id", 1).select("*").single();
     if (error) throw HttpError.internal(error.message);
+    await logAudit({
+      userId: req.admin!.id,
+      action: "SETTINGS_UPDATED",
+      resource: "settings",
+      resourceId: "invoice",
+      permission: "settings.update",
+      metadata: { fields: Object.keys(update).filter((k) => k !== "updated_at") },
+      req,
+    });
     res.json(toDTO(data));
   } catch (err) {
     next(err);

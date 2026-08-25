@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { sendTemplatedEmail } from "../email/email.service.js";
@@ -8,7 +9,7 @@ import { sendTemplatedEmail } from "../email/email.service.js";
 export const adminCustomersRouter = Router();
 adminCustomersRouter.use(authenticate, requireAdmin);
 
-adminCustomersRouter.get("/", async (req, res, next) => {
+adminCustomersRouter.get("/", requirePermission("customers.view"), async (req, res, next) => {
   try {
     const { page = "1", limit = "50" } = req.query as Record<string, string>;
     const pageNum = Math.max(1, Number(page) || 1);
@@ -56,7 +57,7 @@ adminCustomersRouter.get("/", async (req, res, next) => {
   }
 });
 
-adminCustomersRouter.get("/:id", async (req, res, next) => {
+adminCustomersRouter.get("/:id", requirePermission("customers.view"), async (req, res, next) => {
   try {
     const { data: profile, error } = await supabaseAdmin
       .from("customer_profiles")
@@ -115,7 +116,7 @@ adminCustomersRouter.get("/:id", async (req, res, next) => {
   }
 });
 
-adminCustomersRouter.post("/:id/send-welcome-email", async (req, res, next) => {
+adminCustomersRouter.post("/:id/send-welcome-email", requirePermission("customers.update"), async (req, res, next) => {
   try {
     const { data: profile } = await supabaseAdmin.from("customer_profiles").select("*").eq("id", req.params.id).maybeSingle();
     if (!profile) throw HttpError.notFound("Customer not found");
@@ -135,7 +136,7 @@ adminCustomersRouter.post("/:id/send-welcome-email", async (req, res, next) => {
   }
 });
 
-adminCustomersRouter.get("/:id/emails", async (req, res, next) => {
+adminCustomersRouter.get("/:id/emails", requirePermission("customers.view"), async (req, res, next) => {
   try {
     const { data: profile } = await supabaseAdmin.from("customer_profiles").select("email").eq("id", req.params.id).maybeSingle();
     if (!profile) throw HttpError.notFound("Customer not found");

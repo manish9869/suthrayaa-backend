@@ -141,7 +141,7 @@ function addressBlock(a: OrderEmailPayload["shippingAddress"]) {
  * with an optional status pill, an optional highlight strip (e.g. order number), the body,
  * a trust strip, and a footer. `badge`/`highlight` are opt-in so generic mail (contact-form
  * replies) can skip them while order/payment mail gets the full treatment. */
-function wrapEmail(
+export function wrapEmail(
   title: string,
   bodyHtml: string,
   options: { badge?: { label: string; tone?: BadgeTone }; highlight?: { label: string; value: string } } = {}

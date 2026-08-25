@@ -2,9 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
+import { can } from "../../modules/rbac/rbac.service.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
+import { logAudit } from "../rbac/audit.service.js";
 import { sendTemplatedEmail, ORDER_EMAIL_TYPES } from "../email/email.service.js";
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
@@ -36,7 +39,7 @@ function toAdminOrderSummary(o: any) {
   };
 }
 
-adminOrdersRouter.get("/", async (req, res, next) => {
+adminOrdersRouter.get("/", requirePermission("orders.view"), async (req, res, next) => {
   try {
     const { status, paymentStatus, custom, page = "1", limit = "50" } = req.query as Record<string, string>;
     let query = supabaseAdmin
@@ -71,7 +74,7 @@ adminOrdersRouter.get("/", async (req, res, next) => {
   }
 });
 
-adminOrdersRouter.get("/:id", async (req, res, next) => {
+adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("orders")
@@ -141,9 +144,15 @@ const statusUpdateSchema = z.object({
   courier: z.string().optional().nullable(),
 });
 
-adminOrdersRouter.patch("/:id/status", validate(statusUpdateSchema), async (req, res, next) => {
+adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), validate(statusUpdateSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof statusUpdateSchema>;
+    if (body.status === "cancelled" && !can(req.rbac!, "orders.cancel")) {
+      throw HttpError.forbidden("You do not have permission to cancel orders.");
+    }
+    if ((body.status === "refunded" || body.status === "partially_refunded") && !can(req.rbac!, "orders.refund")) {
+      throw HttpError.forbidden("You do not have permission to refund orders.");
+    }
     const update: Record<string, unknown> = { status: body.status };
     if (body.trackingNumber !== undefined) update.tracking_number = body.trackingNumber;
     if (body.courier !== undefined) update.courier = body.courier;
@@ -211,6 +220,15 @@ adminOrdersRouter.patch("/:id/status", validate(statusUpdateSchema), async (req,
       }
     }
 
+    await logAudit({
+      userId: req.admin!.id,
+      action: body.status === "cancelled" ? "ORDER_CANCELLED" : body.status === "refunded" || body.status === "partially_refunded" ? "ORDER_REFUNDED" : "ORDER_UPDATED",
+      resource: "orders",
+      resourceId: order.id,
+      permission: "orders.update",
+      metadata: { status: body.status, orderNumber: order.order_number },
+      req,
+    });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -218,7 +236,7 @@ adminOrdersRouter.patch("/:id/status", validate(statusUpdateSchema), async (req,
 });
 
 const notesSchema = z.object({ adminNotes: z.string().max(2000).optional().nullable(), customerNotes: z.string().max(2000).optional().nullable() });
-adminOrdersRouter.patch("/:id/notes", validate(notesSchema), async (req, res, next) => {
+adminOrdersRouter.patch("/:id/notes", requirePermission("orders.update"), validate(notesSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof notesSchema>;
     const update: Record<string, unknown> = {};
@@ -237,7 +255,7 @@ adminOrdersRouter.patch("/:id/notes", validate(notesSchema), async (req, res, ne
 // status — e.g. resending a notification, or nudging "tracking updated" without a status change.
 
 const sendEmailSchema = z.object({ type: z.enum(ORDER_EMAIL_TYPES) });
-adminOrdersRouter.post("/:id/send-email", validate(sendEmailSchema), async (req, res, next) => {
+adminOrdersRouter.post("/:id/send-email", requirePermission("orders.update"), validate(sendEmailSchema), async (req, res, next) => {
   try {
     const { type } = req.body as z.infer<typeof sendEmailSchema>;
     const { data: order } = await supabaseAdmin.from("orders").select("*").eq("id", req.params.id).single();
@@ -266,7 +284,7 @@ adminOrdersRouter.post("/:id/send-email", validate(sendEmailSchema), async (req,
 
 // ---- Invoice actions ----
 
-adminOrdersRouter.get("/:id/invoice", async (req, res, next) => {
+adminOrdersRouter.get("/:id/invoice", requirePermission("orders.view"), async (req, res, next) => {
   try {
     const invoice = await getInvoiceForOrder(req.params.id);
     if (!invoice) throw HttpError.notFound("No invoice for this order yet");
@@ -283,7 +301,7 @@ adminOrdersRouter.get("/:id/invoice", async (req, res, next) => {
   }
 });
 
-adminOrdersRouter.post("/:id/invoice/regenerate", async (req, res, next) => {
+adminOrdersRouter.post("/:id/invoice/regenerate", requirePermission("orders.update"), async (req, res, next) => {
   try {
     let invoice = await getInvoiceForOrder(req.params.id);
     if (!invoice) invoice = await createInvoiceForOrder(req.params.id);
@@ -293,7 +311,7 @@ adminOrdersRouter.post("/:id/invoice/regenerate", async (req, res, next) => {
   }
 });
 
-adminOrdersRouter.get("/:id/invoice/pdf", async (req, res, next) => {
+adminOrdersRouter.get("/:id/invoice/pdf", requirePermission("orders.view"), async (req, res, next) => {
   try {
     let invoice = await getInvoiceForOrder(req.params.id);
     if (!invoice) invoice = await createInvoiceForOrder(req.params.id);
@@ -308,7 +326,7 @@ adminOrdersRouter.get("/:id/invoice/pdf", async (req, res, next) => {
   }
 });
 
-adminOrdersRouter.post("/:id/invoice/email", async (req, res, next) => {
+adminOrdersRouter.post("/:id/invoice/email", requirePermission("orders.update"), async (req, res, next) => {
   try {
     let invoice = await getInvoiceForOrder(req.params.id);
     if (!invoice) invoice = await createInvoiceForOrder(req.params.id);
