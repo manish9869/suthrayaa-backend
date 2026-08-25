@@ -3,6 +3,7 @@ import { env, isEmailConfigured } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { formatPrice } from "../../lib/format.js";
 import { supabaseAdmin } from "../../config/supabase.js";
+import { getSettingSync } from "../settings/settings.service.js";
 
 const transporter = isEmailConfigured
   ? nodemailer.createTransport({
@@ -460,6 +461,22 @@ export async function resendLoggedEmail(to: string, subject: string, html: strin
   await transporter.sendMail({ from: `Suthrayaa <${env.GMAIL_USER}>`, to, subject, html });
 }
 
+/** The store/support/social links every richer admin-editable template can reference —
+ * shared by any hand-built send (like the contact form) that isn't going through the
+ * per-order variable builder in admin.orders.routes.ts. */
+function storeLinkVariables(): Record<string, string> {
+  const instagramEnabled = getSettingSync<boolean>("social.instagram_enabled");
+  const facebookEnabled = getSettingSync<boolean>("social.facebook_enabled");
+  return {
+    store_url: env.FRONTEND_URL,
+    support_url: `${env.FRONTEND_URL}/faqs`,
+    contact_url: `${env.FRONTEND_URL}/contact`,
+    instagram_url: instagramEnabled ? getSettingSync<string>("social.instagram_url") : "",
+    facebook_url: facebookEnabled ? getSettingSync<string>("social.facebook_url") : "",
+    current_year: String(new Date().getFullYear()),
+  };
+}
+
 // ---- Contact form ----
 
 interface ContactMessagePayload {
@@ -507,7 +524,18 @@ export async function sendContactFormEmails(payload: ContactMessagePayload) {
   await Promise.all([
     send(payload.email, "We've got your message — Suthrayaa", customerHtml),
     env.ADMIN_NOTIFICATION_EMAIL
-      ? send(env.ADMIN_NOTIFICATION_EMAIL, `New enquiry: ${safeSubject}`, adminHtml)
+      ? sendTemplatedEmail({
+          type: "admin_new_enquiry",
+          to: env.ADMIN_NOTIFICATION_EMAIL,
+          variables: {
+            customer_name: payload.name,
+            customer_email: payload.email,
+            ...storeLinkVariables(),
+          },
+          rawVariables: {
+            enquiry_message: `<strong>${escapeHtml(safeSubject)}</strong><br/><br/>${messageHtml}`,
+          },
+        })
       : Promise.resolve(),
   ]);
 }

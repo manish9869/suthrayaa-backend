@@ -1,7 +1,592 @@
 <!-- SUBJECT: New enquiry from {{customer_name}} -->
-<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;margin:0 0 16px;color:#3D2B35;">
-  <strong>{{customer_name}}</strong> &middot; {{customer_email}}
-</p>
-<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#3D2B35;background:#FFFAFD;border:1px solid #F1E5EB;border-radius:12px;padding:16px 20px;margin:0;line-height:1.6;">
-  {{enquiry_message}}
-</p>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="x-apple-disable-message-reformatting">
+
+  <title>New Suthrayaa Enquiry</title>
+
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
+
+  <style>
+    * {
+      -webkit-text-size-adjust:100%;
+      -ms-text-size-adjust:100%;
+    }
+
+    body,
+    table,
+    td,
+    a {
+      -webkit-text-size-adjust:100%;
+      -ms-text-size-adjust:100%;
+    }
+
+    table,
+    td {
+      mso-table-lspace:0pt;
+      mso-table-rspace:0pt;
+    }
+
+    img {
+      -ms-interpolation-mode:bicubic;
+      border:0;
+      outline:none;
+      text-decoration:none;
+    }
+
+    body {
+      margin:0 !important;
+      padding:0 !important;
+      width:100% !important;
+      background:#FFFFFF;
+      font-family:Arial,Helvetica,sans-serif;
+    }
+
+    a {
+      text-decoration:none;
+    }
+
+    .email-container {
+      width:100%;
+      max-width:640px;
+    }
+
+    @media only screen and (max-width:640px) {
+      .email-container {
+        width:100% !important;
+      }
+
+      .mobile-padding {
+        padding-left:20px !important;
+        padding-right:20px !important;
+      }
+
+      .mobile-header {
+        padding:30px 20px 28px !important;
+      }
+
+      .mobile-title {
+        font-size:27px !important;
+        line-height:1.25 !important;
+      }
+
+      .mobile-footer {
+        padding-left:20px !important;
+        padding-right:20px !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<!-- PREHEADER -->
+<div style="
+  display:none;
+  font-size:1px;
+  color:#FFFFFF;
+  line-height:1px;
+  max-height:0;
+  max-width:0;
+  opacity:0;
+  overflow:hidden;
+">
+  New customer enquiry from {{customer_name}} requires your attention.
+</div>
+
+<!-- OUTER BACKGROUND -->
+<table
+  role="presentation"
+  width="100%"
+  cellpadding="0"
+  cellspacing="0"
+  border="0"
+  style="background:#FFFFFF;"
+>
+  <tr>
+    <td align="center" style="padding:32px 12px;">
+
+      <!-- MAIN CONTAINER -->
+      <table
+        role="presentation"
+        class="email-container"
+        width="640"
+        cellpadding="0"
+        cellspacing="0"
+        border="0"
+        style="
+          max-width:640px;
+          width:100%;
+          background:#FFFFFF;
+          border-radius:22px;
+          overflow:hidden;
+          border:1px solid #F0DFE7;
+        "
+      >
+
+        <!-- TOP BRAND STRIP -->
+        <tr>
+          <td
+            height="6"
+            style="
+              background:#D96C8A;
+              font-size:1px;
+              line-height:1px;
+            "
+          >
+            &nbsp;
+          </td>
+        </tr>
+
+        <!-- HEADER -->
+        <tr>
+          <td
+            class="mobile-header"
+            align="center"
+            style="
+              background:#FFF4F7;
+              padding:38px 42px 34px;
+            "
+          >
+
+            <!-- DECORATIVE -->
+            <p style="
+              margin:0 0 12px;
+              color:#A77BCA;
+              font-size:14px;
+              letter-spacing:7px;
+            ">
+              ✦ ✧ ✦
+            </p>
+
+            <!-- LOGO -->
+            <a
+              href="{{store_url}}"
+              target="_blank"
+            >
+              <img
+                src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Suthraya%20Logo%20-%20Trans-HgT4V8esTeOZ2PwWy5B7QcPjLLrahf.png"
+                width="150"
+                alt="Suthrayaa"
+                style="
+                  width:150px;
+                  max-width:150px;
+                  height:auto;
+                  margin:0 auto 22px;
+                  display:block;
+                "
+              >
+            </a>
+
+            <!-- STATUS -->
+            <table
+              role="presentation"
+              cellpadding="0"
+              cellspacing="0"
+              border="0"
+              align="center"
+              style="margin:0 auto 18px;"
+            >
+              <tr>
+                <td style="
+                  background:#F1E7FA;
+                  border:1px solid #DCC7ED;
+                  border-radius:50px;
+                  padding:8px 18px;
+                  color:#916BB0;
+                  font-size:10px;
+                  font-weight:700;
+                  letter-spacing:1.5px;
+                  text-transform:uppercase;
+                  white-space:nowrap;
+                ">
+                  💌 &nbsp; NEW ENQUIRY
+                </td>
+              </tr>
+            </table>
+
+            <!-- TITLE -->
+            <h1
+              class="mobile-title"
+              style="
+                margin:0 0 10px;
+                color:#3D2B35;
+                font-family:Arial,Helvetica,sans-serif;
+                font-size:31px;
+                line-height:1.25;
+                font-weight:800;
+                letter-spacing:-0.5px;
+              "
+            >
+              You have a new enquiry
+            </h1>
+
+            <p style="
+              margin:0;
+              color:#8F7A85;
+              font-size:14px;
+              line-height:1.75;
+            ">
+              A customer has reached out to Suthrayaa.
+            </p>
+
+            <p style="
+              margin:20px 0 0;
+              color:#D96C8A;
+              font-size:13px;
+              letter-spacing:5px;
+            ">
+              ♡ ♡ ♡
+            </p>
+
+          </td>
+        </tr>
+
+        <!-- CUSTOMER -->
+        <tr>
+          <td
+            class="mobile-padding"
+            style="padding:31px 42px 0;"
+          >
+
+            <p style="
+              margin:0 0 12px;
+              color:#D96C8A;
+              font-size:10px;
+              font-weight:700;
+              letter-spacing:1.8px;
+              text-transform:uppercase;
+              white-space:nowrap;
+            ">
+              👋 &nbsp; CUSTOMER
+            </p>
+
+            <table
+              role="presentation"
+              width="100%"
+              cellpadding="0"
+              cellspacing="0"
+              border="0"
+              style="
+                background:#FFFAFD;
+                border:1px solid #F1E5EB;
+                border-radius:15px;
+              "
+            >
+              <tr>
+                <td style="
+                  padding:17px 18px;
+                  color:#3D2B35;
+                  font-size:14px;
+                  line-height:1.6;
+                ">
+                  <strong style="
+                    font-size:14px;
+                    color:#3D2B35;
+                  ">
+                    {{customer_name}}
+                  </strong>
+
+                  <br>
+
+                  <a
+                    href="mailto:{{customer_email}}"
+                    style="
+                      color:#A77BCA;
+                      font-size:12px;
+                    "
+                  >
+                    {{customer_email}}
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- MESSAGE -->
+        <tr>
+          <td
+            class="mobile-padding"
+            style="padding:29px 42px 0;"
+          >
+
+            <p style="
+              margin:0 0 12px;
+              color:#A77BCA;
+              font-size:10px;
+              font-weight:700;
+              letter-spacing:1.8px;
+              text-transform:uppercase;
+              white-space:nowrap;
+            ">
+              💬 &nbsp; CUSTOMER MESSAGE
+            </p>
+
+            <table
+              role="presentation"
+              width="100%"
+              cellpadding="0"
+              cellspacing="0"
+              border="0"
+              style="
+                background:#FDF9FF;
+                border:1px solid #EBE1F2;
+                border-radius:15px;
+              "
+            >
+              <tr>
+                <td style="
+                  padding:20px;
+                  color:#4D3B45;
+                  font-size:14px;
+                  line-height:1.8;
+                ">
+                  {{enquiry_message}}
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- ACTION -->
+        <tr>
+          <td
+            class="mobile-padding"
+            align="center"
+            style="padding:33px 42px 38px;"
+          >
+
+            <p style="
+              margin:0 0 18px;
+              color:#8F7A85;
+              font-size:12px;
+              line-height:1.6;
+            ">
+              A quick response can help keep the Suthrayaa experience personal and friendly. ✨
+            </p>
+
+            <table
+              role="presentation"
+              cellpadding="0"
+              cellspacing="0"
+              border="0"
+              align="center"
+            >
+              <tr>
+                <td style="
+                  background:#D96C8A;
+                  border-radius:11px;
+                ">
+                  <a
+                    href="mailto:{{customer_email}}"
+                    target="_blank"
+                    style="
+                      display:inline-block;
+                      padding:15px 32px;
+                      color:#FFFFFF;
+                      font-size:13px;
+                      font-weight:700;
+                      letter-spacing:0.2px;
+                    "
+                  >
+                    Reply to Customer &nbsp;→
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- BRAND MESSAGE -->
+        <tr>
+          <td
+            align="center"
+            style="
+              background:#FFF0F4;
+              border-top:1px solid #F4DFE7;
+              border-bottom:1px solid #F4DFE7;
+              padding:19px 25px;
+            "
+          >
+            <p style="
+              margin:0 0 5px;
+              color:#B95D79;
+              font-size:11px;
+              font-weight:700;
+            ">
+              Keep Suthrayaa personal 💕
+            </p>
+
+            <p style="
+              margin:0;
+              color:#A18D97;
+              font-size:10px;
+              line-height:1.6;
+            ">
+              Handmade &nbsp; ✦ &nbsp;
+              Small batches &nbsp; ✦ &nbsp;
+              Big love
+            </p>
+          </td>
+        </tr>
+
+        <!-- FOOTER -->
+        <tr>
+          <td
+            class="mobile-footer"
+            align="center"
+            style="
+              background:#3D2B35;
+              padding:30px 42px;
+            "
+          >
+
+            <p style="
+              margin:0 0 15px;
+              color:#E7B4C5;
+              font-size:12px;
+              letter-spacing:5px;
+            ">
+              ✦ ♡ ✦
+            </p>
+
+            <!-- FOOTER LOGO -->
+            <a
+              href="{{store_url}}"
+              target="_blank"
+            >
+              <img
+                src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Suthraya%20Logo%20-%20Trans-HgT4V8esTeOZ2PwWy5B7QcPjLLrahf.png"
+                width="65"
+                alt="Suthrayaa"
+                style="
+                  width:65px;
+                  max-width:65px;
+                  height:auto;
+                  margin:0 auto 12px;
+                  display:block;
+                  filter:brightness(0) invert(1);
+                "
+              >
+            </a>
+
+            <p style="
+              margin:0 0 7px;
+              color:#F8E8EE;
+              font-size:11px;
+              font-weight:700;
+            ">
+              Suthrayaa
+            </p>
+
+            <p style="
+              margin:0 0 14px;
+              color:#BDAAB2;
+              font-size:10px;
+              line-height:1.7;
+            ">
+              Handmade pieces,
+              <span style="white-space:nowrap;">
+                made with love. 🧶
+              </span>
+            </p>
+
+            <!-- LINKS -->
+            <p style="
+              margin:0;
+              font-size:10px;
+              line-height:1.8;
+            ">
+              <a
+                href="{{store_url}}"
+                target="_blank"
+                style="color:#E3B9C7;"
+              >
+                Shop
+              </a>
+
+              &nbsp;&nbsp;·&nbsp;&nbsp;
+
+              <a
+                href="{{support_url}}"
+                target="_blank"
+                style="color:#E3B9C7;"
+              >
+                Help
+              </a>
+
+              &nbsp;&nbsp;·&nbsp;&nbsp;
+
+              <a
+                href="{{contact_url}}"
+                target="_blank"
+                style="color:#E3B9C7;"
+              >
+                Contact
+              </a>
+            </p>
+
+            <!-- SOCIAL -->
+            {{#if instagram_url}}
+            <p style="
+              margin:17px 0 0;
+              font-size:10px;
+            ">
+              <a
+                href="{{instagram_url}}"
+                target="_blank"
+                style="color:#D7B2C0;"
+              >
+                Instagram
+              </a>
+
+              &nbsp; ✦ &nbsp;
+
+              <a
+                href="{{facebook_url}}"
+                target="_blank"
+                style="color:#D7B2C0;"
+              >
+                Facebook
+              </a>
+            </p>
+            {{/if}}
+
+            <p style="
+              margin:17px 0 0;
+              color:#82717A;
+              font-size:9px;
+              line-height:1.6;
+            ">
+              © {{current_year}} Suthrayaa.
+              All rights reserved.
+            </p>
+
+          </td>
+        </tr>
+
+      </table>
+
+    </td>
+  </tr>
+</table>
+
+</body>
+</html>
