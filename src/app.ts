@@ -22,6 +22,7 @@ import { reviewsRouter } from "./modules/catalog/reviews.routes.js";
 import { meRouter } from "./modules/customers/me.routes.js";
 import { checkoutRouter } from "./modules/checkout/checkout.routes.js";
 import { couponsRouter } from "./modules/coupons/coupons.routes.js";
+import { contactRouter } from "./modules/contact/contact.routes.js";
 
 import { adminMeRouter } from "./modules/admin/admin.me.routes.js";
 import { adminProductsRouter } from "./modules/admin/admin.products.routes.js";
@@ -78,6 +79,7 @@ export function createApp() {
   app.use("/api/me", meRouter);
   app.use("/api/checkout", checkoutRouter);
   app.use("/api/coupons", couponsRouter);
+  app.use("/api/contact", contactRouter);
 
   // Admin — every router here applies its own authenticate + requireAdmin internally.
   app.use("/api/admin", adminMeRouter);

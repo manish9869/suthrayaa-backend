@@ -286,3 +286,54 @@ export async function resendLoggedEmail(to: string, subject: string, html: strin
   if (!transporter) throw new Error("Email is not configured");
   await transporter.sendMail({ from: `Suthrayaa <${env.GMAIL_USER}>`, to, subject, html });
 }
+
+// ---- Contact form ----
+
+interface ContactMessagePayload {
+  name: string;
+  email: string;
+  subject?: string;
+  message: string;
+}
+
+/** Sends the "we got your message" reply to the customer and the notification to the store's
+ * admin inbox. Fire-and-forget from the route's perspective — a broken/misconfigured mailbox
+ * must never fail the request, so failures are logged, not thrown. */
+export async function sendContactFormEmails(payload: ContactMessagePayload) {
+  const safeSubject = payload.subject?.trim() || "General enquiry";
+  const messageHtml = escapeHtml(payload.message).replace(/\n/g, "<br/>");
+
+  const customerHtml = wrapEmail(
+    `Thanks for reaching out, ${payload.name.split(" ")[0]}!`,
+    `
+    <p style="font-size:14px;color:#7a6f63;margin:0 0 20px;">
+      We've received your message and will get back to you within 1-2 business days.
+    </p>
+    <h2 style="font-size:14px;margin:0 0 8px;">Your message</h2>
+    <p style="font-size:14px;color:#2a2420;background:#faf7f2;border-radius:8px;padding:16px;margin:0;">
+      <strong>${escapeHtml(safeSubject)}</strong><br/><br/>${messageHtml}
+    </p>
+    `
+  );
+
+  const adminHtml = wrapEmail(
+    `New contact form message`,
+    `
+    <p style="font-size:14px;margin:0 0 16px;">
+      <strong>${escapeHtml(payload.name)}</strong> &middot;
+      <a href="mailto:${escapeHtml(payload.email)}" style="color:#1a365d;">${escapeHtml(payload.email)}</a>
+    </p>
+    <h2 style="font-size:14px;margin:0 0 8px;">${escapeHtml(safeSubject)}</h2>
+    <p style="font-size:14px;color:#2a2420;background:#faf7f2;border-radius:8px;padding:16px;margin:0;">
+      ${messageHtml}
+    </p>
+    `
+  );
+
+  await Promise.all([
+    send(payload.email, "We've got your message — Suthrayaa", customerHtml),
+    env.ADMIN_NOTIFICATION_EMAIL
+      ? send(env.ADMIN_NOTIFICATION_EMAIL, `New enquiry: ${safeSubject}`, adminHtml)
+      : Promise.resolve(),
+  ]);
+}
