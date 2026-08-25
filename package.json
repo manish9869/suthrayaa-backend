@@ -16,7 +16,8 @@
     "seed:catalog": "tsx scripts/reseed-real-catalog.ts",
     "setup:storage": "tsx scripts/setup-storage.ts",
     "list:users": "tsx scripts/list-users.ts",
-    "promote:admin": "tsx scripts/promote-admin.ts"
+    "promote:admin": "tsx scripts/promote-admin.ts",
+    "sync:emails": "tsx scripts/sync-email-templates.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

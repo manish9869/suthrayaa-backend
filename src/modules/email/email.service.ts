@@ -277,14 +277,26 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** A value counts as "truthy" for {{#if}} purposes if it's a non-empty, non-"false"/"0" string. */
+function isTruthy(variables: Record<string, string>, key: string): boolean {
+  const v = variables[key];
+  return Boolean(v) && v !== "false" && v !== "0";
+}
+
 /** {{variables}} are HTML-escaped (may contain customer-supplied text); rawVariables are
- * trusted, already-safe HTML built server-side (e.g. an items table) and inserted as-is. */
+ * trusted, already-safe HTML built server-side (e.g. an items table) and inserted as-is.
+ * {{#if flag}}...{{else}}...{{/if}} blocks (no nesting) let a single template branch on a
+ * boolean-ish variable — e.g. showing a tracking number only once one exists. */
 export function substituteTemplate(
   template: string,
   variables: Record<string, string>,
   rawVariables: Record<string, string> = {}
 ): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
+  const withConditionals = template.replace(
+    /\{\{#if (\w+)\}\}([\s\S]*?)(?:\{\{else\}\}([\s\S]*?))?\{\{\/if\}\}/g,
+    (_match, key: string, whenTrue: string, whenFalse = "") => (isTruthy(variables, key) ? whenTrue : whenFalse)
+  );
+  return withConditionals.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
     if (key in rawVariables) return rawVariables[key];
     if (key in variables) return escapeHtml(variables[key]);
     return match;
@@ -299,6 +311,7 @@ const EMAIL_TYPE_BADGE: Record<string, { label: string; tone: BadgeTone }> = {
   order_making: { label: "In Production", tone: "neutral" },
   order_ready: { label: "Ready to Ship", tone: "neutral" },
   order_shipped: { label: "Shipped", tone: "good" },
+  order_tracking_updated: { label: "Tracking Updated", tone: "good" },
   order_delivered: { label: "Delivered", tone: "good" },
   order_cancelled: { label: "Order Cancelled", tone: "critical" },
   payment_successful: { label: "Payment Received", tone: "good" },
@@ -306,7 +319,31 @@ const EMAIL_TYPE_BADGE: Record<string, { label: string; tone: BadgeTone }> = {
   refund_processed: { label: "Refund Processed", tone: "warning" },
   custom_order_confirmation: { label: "Custom Order Confirmed", tone: "good" },
   invoice_email: { label: "Invoice Attached", tone: "neutral" },
+  customer_welcome: { label: "Welcome", tone: "good" },
+  admin_new_order: { label: "New Order", tone: "neutral" },
+  admin_new_enquiry: { label: "New Enquiry", tone: "neutral" },
+  admin_payment_failed: { label: "Payment Failed", tone: "critical" },
 };
+
+/** Order-lifecycle types selectable in the admin's manual "Send Email" action on an order —
+ * every type that takes the standard order variable set (customer_name, order_number,
+ * order_total, tracking_number, store_name). Excludes invoice_email (needs a PDF attachment,
+ * has its own dedicated action) and the admin-facing/customer-welcome types (different variables,
+ * different trigger point). */
+export const ORDER_EMAIL_TYPES = [
+  "order_placed",
+  "order_confirmed",
+  "order_making",
+  "order_ready",
+  "order_shipped",
+  "order_tracking_updated",
+  "order_delivered",
+  "order_cancelled",
+  "payment_successful",
+  "payment_failed",
+  "refund_processed",
+  "custom_order_confirmation",
+] as const;
 
 export interface TemplatedEmailInput {
   type: string;

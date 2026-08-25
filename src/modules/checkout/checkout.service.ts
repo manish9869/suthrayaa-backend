@@ -609,7 +609,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
 export async function markOrderFailedByRazorpayOrderId(razorpayOrderId: string) {
   const { data: order } = await supabaseAdmin
     .from("orders")
-    .select("id, payment_status")
+    .select("id, order_number, total, payment_status, shipping_address, guest_email")
     .eq("razorpay_order_id", razorpayOrderId)
     .maybeSingle();
   if (!order || order.payment_status === "paid") return;
@@ -620,4 +620,32 @@ export async function markOrderFailedByRazorpayOrderId(razorpayOrderId: string) 
     status: "pending_payment",
     note: "Payment failed",
   });
+
+  const addr = (order.shipping_address ?? {}) as Record<string, string>;
+  const customerName = addr.firstName ? `${addr.firstName} ${addr.lastName ?? ""}`.trim() : "there";
+  const customerEmail = order.guest_email ?? addr.email;
+  const orderTotal = formatPrice(Number(order.total));
+
+  if (customerEmail) {
+    sendTemplatedEmail({
+      type: "payment_failed",
+      to: customerEmail,
+      variables: { customer_name: customerName, order_number: order.order_number, order_total: orderTotal, store_name: "Suthrayaa" },
+      relatedOrderId: order.id,
+    }).catch((err) => logger.error({ err, orderId: order.id }, "payment_failed email failed"));
+  }
+  if (env.ADMIN_NOTIFICATION_EMAIL) {
+    sendTemplatedEmail({
+      type: "admin_payment_failed",
+      to: env.ADMIN_NOTIFICATION_EMAIL,
+      variables: {
+        customer_name: customerName,
+        customer_email: customerEmail ?? "no email on file",
+        order_number: order.order_number,
+        order_total: orderTotal,
+        store_name: "Suthrayaa",
+      },
+      relatedOrderId: order.id,
+    }).catch((err) => logger.error({ err, orderId: order.id }, "admin_payment_failed email failed"));
+  }
 }

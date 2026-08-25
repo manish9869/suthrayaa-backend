@@ -3,6 +3,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
+import { sendTemplatedEmail } from "../email/email.service.js";
 
 export const adminCustomersRouter = Router();
 adminCustomersRouter.use(authenticate, requireAdmin);
@@ -109,6 +110,26 @@ adminCustomersRouter.get("/:id", async (req, res, next) => {
       })),
       addresses: addresses ?? [],
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminCustomersRouter.post("/:id/send-welcome-email", async (req, res, next) => {
+  try {
+    const { data: profile } = await supabaseAdmin.from("customer_profiles").select("*").eq("id", req.params.id).maybeSingle();
+    if (!profile) throw HttpError.notFound("Customer not found");
+    if (!profile.email) throw HttpError.badRequest("This customer has no email address on file");
+
+    await sendTemplatedEmail({
+      type: "customer_welcome",
+      to: profile.email,
+      variables: {
+        customer_name: `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim() || "there",
+        store_name: "Suthrayaa",
+      },
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

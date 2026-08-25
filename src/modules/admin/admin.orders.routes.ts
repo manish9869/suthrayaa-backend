@@ -5,7 +5,7 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
-import { sendTemplatedEmail } from "../email/email.service.js";
+import { sendTemplatedEmail, ORDER_EMAIL_TYPES } from "../email/email.service.js";
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 
@@ -226,6 +226,38 @@ adminOrdersRouter.patch("/:id/notes", validate(notesSchema), async (req, res, ne
     if (body.customerNotes !== undefined) update.customer_notes = body.customerNotes;
     const { error } = await supabaseAdmin.from("orders").update(update).eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Manual email send ----
+// Lets an admin send any order-lifecycle email on demand, independent of the order's actual
+// status — e.g. resending a notification, or nudging "tracking updated" without a status change.
+
+const sendEmailSchema = z.object({ type: z.enum(ORDER_EMAIL_TYPES) });
+adminOrdersRouter.post("/:id/send-email", validate(sendEmailSchema), async (req, res, next) => {
+  try {
+    const { type } = req.body as z.infer<typeof sendEmailSchema>;
+    const { data: order } = await supabaseAdmin.from("orders").select("*").eq("id", req.params.id).single();
+    if (!order) throw HttpError.notFound("Order not found");
+
+    const to = order.guest_email ?? order.shipping_address?.email;
+    if (!to) throw HttpError.badRequest("This order has no email address on file");
+
+    await sendTemplatedEmail({
+      type,
+      to,
+      variables: {
+        customer_name: order.shipping_address ? `${order.shipping_address.firstName} ${order.shipping_address.lastName}`.trim() : "there",
+        order_number: order.order_number,
+        order_total: formatPrice(Number(order.total)),
+        tracking_number: order.tracking_number ?? "",
+        store_name: "Suthrayaa",
+      },
+      relatedOrderId: order.id,
+    });
     res.json({ ok: true });
   } catch (err) {
     next(err);
