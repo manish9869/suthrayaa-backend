@@ -21,7 +21,8 @@
     "setup:storage": "tsx scripts/setup-storage.ts",
     "list:users": "tsx scripts/list-users.ts",
     "promote:admin": "tsx scripts/promote-admin.ts",
-    "sync:emails": "tsx scripts/sync-email-templates.ts"
+    "sync:emails": "tsx scripts/sync-email-templates.ts",
+    "attach:studio-images": "tsx scripts/attach-studio-images.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
