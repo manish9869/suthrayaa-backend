@@ -18,6 +18,8 @@
     .h1{font-size:25px!important;}
     .stack{display:block!important;width:100%!important;padding-left:0!important;padding-right:0!important;border-left:0!important;}
     .stack + .stack{padding-top:12px!important;}
+    .stack-box{padding:14px 18px!important;box-sizing:border-box!important;}
+    .stack-box + .stack-box{border-top:1px solid #EBE6F5!important;padding-top:14px!important;}
   }
 </style>
 </head>
@@ -47,13 +49,13 @@
 <h1 class="h1" style="margin:0 0 12px;font-family:'Fraunces', Georgia, 'Times New Roman', serif;font-weight:500;font-size:30px;line-height:1.2;letter-spacing:-0.4px;color:#1C1642;">Thank you, {{customer_name}}!</h1>
 <p style="margin:0px 0 14px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:15px;line-height:1.65;color:#6B6485;">Your order is safely with us. Every Suthrayaa piece is crocheted by hand in small batches, so we'll let you know at each step as it comes to life.</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 4px;background:#F7F5FC;border:1px solid #EBE6F5;border-radius:16px;"><tr>
-    <td class="stack" valign="top" style="padding:16px 20px;">
+    <td class="stack stack-box" valign="top" style="padding:16px 20px;">
       <p style="margin:0 0 5px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:10.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#A49CC0;">Order</p>
       <p style="margin:0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:16px;font-weight:700;color:#1C1642;letter-spacing:0.4px;">{{order_number}}</p>
-    </td><td class="stack" valign="top" style="padding:16px 20px;border-left:1px solid #EBE6F5;">
+    </td><td class="stack stack-box" valign="top" style="padding:16px 20px;border-left:1px solid #EBE6F5;">
       <p style="margin:0 0 5px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:10.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#A49CC0;">Items</p>
       <p style="margin:0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:16px;font-weight:700;color:#1C1642;letter-spacing:0;">{{item_count}}</p>
-    </td><td class="stack" valign="top" style="padding:16px 20px;border-left:1px solid #EBE6F5;">
+    </td><td class="stack stack-box" valign="top" style="padding:16px 20px;border-left:1px solid #EBE6F5;">
       <p style="margin:0 0 5px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:10.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#A49CC0;">Total</p>
       <p style="margin:0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:16px;font-weight:700;color:#1C1642;letter-spacing:0;">{{order_total}}</p>
     </td>

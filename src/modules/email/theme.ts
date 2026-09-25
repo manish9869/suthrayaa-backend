@@ -83,7 +83,7 @@ export const strip = (cells: { label: string; value: string; mono?: boolean }[])
   `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 4px;background:${T.lilac};border:1px solid ${T.border};border-radius:16px;"><tr>
     ${cells
       .map(
-        (c, i) => `<td class="stack" valign="top" style="padding:16px 20px;${i ? `border-left:1px solid ${T.border};` : ""}">
+        (c, i) => `<td class="stack stack-box" valign="top" style="padding:16px 20px;${i ? `border-left:1px solid ${T.border};` : ""}">
       <p style="margin:0 0 5px;font-family:${SANS};font-size:10.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:${T.faint};">${c.label}</p>
       <p style="margin:0;font-family:${c.mono ? SANS : SANS};font-size:16px;font-weight:700;color:${T.ink};letter-spacing:${c.mono ? "0.4px" : "0"};">${c.value}</p>
     </td>`
@@ -260,6 +260,8 @@ export function shell(o: { title: string; preheader: string; body: string; admin
     .h1{font-size:25px!important;}
     .stack{display:block!important;width:100%!important;padding-left:0!important;padding-right:0!important;border-left:0!important;}
     .stack + .stack{padding-top:12px!important;}
+    .stack-box{padding:14px 18px!important;box-sizing:border-box!important;}
+    .stack-box + .stack-box{border-top:1px solid ${T.border}!important;padding-top:14px!important;}
   }
 </style>
 </head>
