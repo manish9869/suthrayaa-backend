@@ -8,8 +8,8 @@
  * image buckets (same pipeline as an admin upload), and writes the image rows. Anything
  * with a real uploaded photo is left untouched, so it is safe to re-run.
  *
- *   STOREFRONT_URL=https://suthrayaa.com pnpm attach:studio-images            # apply
- *   STOREFRONT_URL=https://suthrayaa.com pnpm attach:studio-images --dry-run  # preview
+ *   STOREFRONT_URL=https://suthrayaa.com npm run attach:studio-images            # apply
+ *   STOREFRONT_URL=https://suthrayaa.com npm run attach:studio-images --dry-run  # preview
  */
 import { supabaseAdmin } from "../src/config/supabase.js";
 import { BUCKETS, uploadProductImage } from "../src/modules/storage/upload.js";

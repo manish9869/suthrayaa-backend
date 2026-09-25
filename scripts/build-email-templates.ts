@@ -4,8 +4,8 @@
  * with the white logo and a stitched peach divider, a lilac canvas, Fraunces-style serif
  * headlines, violet actions and a matching ink footer.
  *
- *   pnpm tsx scripts/build-email-templates.ts      # rewrite the .html files
- *   pnpm tsx scripts/sync-email-templates.ts       # push them to the email_templates table
+ *   npx tsx scripts/build-email-templates.ts      # rewrite the .html files
+ *   npx tsx scripts/sync-email-templates.ts       # push them to the email_templates table
  *
  * Each template only uses the {{variables}} its sender provides (see email.service.ts,
  * checkout.service.ts, admin.orders.routes.ts); anything optional is wrapped in {{#if}}.

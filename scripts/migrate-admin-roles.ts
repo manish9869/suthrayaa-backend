@@ -10,7 +10,7 @@
  * afterward — this script only guarantees nobody LOSES access they currently have.
  *
  * Idempotent: uses upsert on the (user_id, role_id) unique constraint.
- * Usage: pnpm tsx scripts/migrate-admin-roles.ts
+ * Usage: npx tsx scripts/migrate-admin-roles.ts
  */
 import { supabaseAdmin } from "../src/config/supabase.js";
 

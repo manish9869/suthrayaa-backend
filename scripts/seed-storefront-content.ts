@@ -2,7 +2,7 @@
  * One-time: seeds nav_items/footer_links with the site's CURRENT hardcoded content (the
  * same fallback arrays navbar.tsx/footer.tsx now use if these tables are empty), so the new
  * Site Settings admin UI starts populated instead of blank. Idempotent — matches on
- * (label, url) and skips if already present. Usage: pnpm tsx scripts/seed-storefront-content.ts
+ * (label, url) and skips if already present. Usage: npx tsx scripts/seed-storefront-content.ts
  */
 import { supabaseAdmin } from "../src/config/supabase.js";
 

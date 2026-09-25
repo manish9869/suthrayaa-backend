@@ -2,7 +2,7 @@
  * Idempotent RBAC seed — upserts the permission catalog, the 7 default system roles, and
  * each system role's permission grants. Safe to run repeatedly (e.g. after adding a new
  * permission to permissions.catalog.ts); never touches custom (non-system) roles.
- * Usage: pnpm tsx scripts/seed-rbac.ts
+ * Usage: npx tsx scripts/seed-rbac.ts
  */
 import { supabaseAdmin } from "../src/config/supabase.js";
 import { PERMISSIONS } from "../src/modules/rbac/permissions.catalog.js";

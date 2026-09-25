@@ -1,6 +1,6 @@
 /**
  * One-time bootstrap: grants admin_users access to an existing Supabase Auth user by email.
- * Usage: pnpm tsx scripts/promote-admin.ts someone@example.com [role]
+ * Usage: npx tsx scripts/promote-admin.ts someone@example.com [role]
  */
 import { supabaseAdmin } from "../src/config/supabase.js";
 

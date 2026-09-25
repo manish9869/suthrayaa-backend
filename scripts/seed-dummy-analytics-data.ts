@@ -3,7 +3,7 @@
  * admin dashboard's charts/date filters have something to render while you're testing them.
  * Everything created here is tagged for easy cleanup — see clean-dummy-analytics-data.ts.
  *
- * Usage: pnpm tsx scripts/seed-dummy-analytics-data.ts
+ * Usage: npx tsx scripts/seed-dummy-analytics-data.ts
  */
 import crypto from "node:crypto";
 import { supabaseAdmin } from "../src/config/supabase.js";

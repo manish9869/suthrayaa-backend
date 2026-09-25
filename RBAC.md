@@ -31,7 +31,7 @@ Add a new permission by adding one line to the catalog, adding it to whichever d
 role(s) should have it, then re-running the seed:
 
 ```
-pnpm seed:rbac
+npm run seed:rbac
 ```
 
 This is idempotent — safe to run any time the catalog changes. It only touches system roles
@@ -63,8 +63,8 @@ route that isn't linked anywhere in the app UI, only reachable via the generated
 ## One-time migration (already run against production)
 
 ```
-pnpm seed:rbac              # permissions + system roles
-pnpm migrate:admin-roles    # backfills user_roles from the legacy admin_users.role column
+npm run seed:rbac              # permissions + system roles
+npm run migrate:admin-roles    # backfills user_roles from the legacy admin_users.role column
 ```
 
 `migrate-admin-roles.ts` maps every legacy role to `super-admin` (all three legacy values —
@@ -74,5 +74,5 @@ a narrower role via the Roles UI afterward.
 
 ## Tests
 
-`pnpm test` runs `vitest` against the permission-evaluation logic itself (`can()`,
+`npm run test` runs `vitest` against the permission-evaluation logic itself (`can()`,
 `requirePermission`, catalog consistency) — no live DB required.

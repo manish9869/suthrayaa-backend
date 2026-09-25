@@ -1,6 +1,6 @@
 /**
  * One-time bootstrap: creates a Supabase Auth user (email+password) and grants it
- * admin_users access in one step. Usage: pnpm tsx scripts/create-admin.ts <email> <password>
+ * admin_users access in one step. Usage: npx tsx scripts/create-admin.ts <email> <password>
  */
 import { supabaseAdmin } from "../src/config/supabase.js";
 

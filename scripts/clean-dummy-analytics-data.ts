@@ -3,7 +3,7 @@
  * starts with "TEST-" (order_items cascade-delete with them), plus test customer accounts
  * (email ending in "@example.com" with the "testcustomer" prefix).
  *
- * Usage: pnpm tsx scripts/clean-dummy-analytics-data.ts
+ * Usage: npx tsx scripts/clean-dummy-analytics-data.ts
  */
 import { supabaseAdmin } from "../src/config/supabase.js";
 
