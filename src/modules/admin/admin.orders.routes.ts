@@ -8,7 +8,7 @@ import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logAudit } from "../rbac/audit.service.js";
-import { sendTemplatedEmail, ORDER_EMAIL_TYPES, storeLinkVariables } from "../email/email.service.js";
+import { sendTemplatedEmail, ORDER_EMAIL_TYPES, storeLinkVariables, renderOrderDetailsHtml, renderAddressHtml } from "../email/email.service.js";
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 import { env } from "../../config/env.js";
@@ -189,7 +189,32 @@ function buildOrderEmailData(order: any) {
     })),
   };
 
-  return { variables, listVariables };
+  // The same items card + address block checkout emails use, so templates like order_placed
+  // render fully when an admin (re)sends them from the order page.
+  const rawVariables = {
+    items_table: renderOrderDetailsHtml({
+      orderNumber: order.order_number,
+      customerName: variables.customer_name,
+      paymentMethod: order.payment_method,
+      subtotal: Number(order.subtotal),
+      discountAmount,
+      shippingCost: Number(order.shipping_cost ?? 0),
+      giftWrapCost: Number(order.gift_wrap_cost ?? 0),
+      total: Number(order.total),
+      shippingAddress: addr,
+      items: items.map((i: any) => ({
+        name: i.product_name_snapshot,
+        quantity: i.quantity,
+        unitPrice: Number(i.unit_price_snapshot),
+        lineTotal: Number(i.line_total),
+        selectedColorName: i.selected_color_name,
+        customText: i.custom_text,
+      })),
+    }),
+    address_block: addr.addressLine1 ? renderAddressHtml(addr) : "",
+  };
+
+  return { variables, listVariables, rawVariables };
 }
 
 const ORDER_STATUSES = ["pending_payment", "confirmed", "in_production", "ready", "shipped", "delivered", "cancelled", "refunded", "partially_refunded"] as const;
@@ -260,11 +285,12 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
     const emailType = STATUS_EMAIL_TYPE[body.status];
     const customerEmail = order.guest_email ?? order.shipping_address?.email;
     if (emailType && customerEmail) {
-      const { variables, listVariables } = buildOrderEmailData(order);
+      const { variables, listVariables, rawVariables } = buildOrderEmailData(order);
       sendTemplatedEmail({
         type: emailType,
         to: customerEmail,
         variables,
+        rawVariables,
         listVariables,
         relatedOrderId: order.id,
       }).catch(() => {});
@@ -274,6 +300,7 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
           type: "refund_processed",
           to: customerEmail,
           variables,
+          rawVariables,
           listVariables,
           relatedOrderId: order.id,
         }).catch(() => {});
@@ -328,11 +355,12 @@ adminOrdersRouter.post("/:id/send-email", requirePermission("orders.update"), va
     const to = order.guest_email ?? order.shipping_address?.email;
     if (!to) throw HttpError.badRequest("This order has no email address on file");
 
-    const { variables, listVariables } = buildOrderEmailData(order);
+    const { variables, listVariables, rawVariables } = buildOrderEmailData(order);
     await sendTemplatedEmail({
       type,
       to,
       variables,
+      rawVariables,
       listVariables,
       relatedOrderId: order.id,
     });

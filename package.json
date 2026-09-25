@@ -22,7 +22,8 @@
     "list:users": "tsx scripts/list-users.ts",
     "promote:admin": "tsx scripts/promote-admin.ts",
     "sync:emails": "tsx scripts/sync-email-templates.ts",
-    "attach:studio-images": "tsx scripts/attach-studio-images.ts"
+    "attach:studio-images": "tsx scripts/attach-studio-images.ts",
+    "build:emails": "tsx scripts/build-email-templates.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
