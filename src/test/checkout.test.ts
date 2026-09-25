@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { api, auth, seed, placeCodOrder, ADDRESS, CUSTOMER_A, PRODUCT_ID, SIZED_PRODUCT_ID, HIDDEN_PRODUCT_ID, SIZE_GROUP_ID, SIZE_LARGE_ID } from "./helpers.js";
+import { api, seed, placeCodOrder, ADDRESS, CUSTOMER_A, PRODUCT_ID, SIZED_PRODUCT_ID, HIDDEN_PRODUCT_ID, SIZE_GROUP_ID, SIZE_LARGE_ID } from "./helpers.js";
 import { db } from "./db.js";
 
 beforeEach(() => seed());

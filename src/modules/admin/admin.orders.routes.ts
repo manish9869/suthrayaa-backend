@@ -87,6 +87,16 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
     if (!data) throw HttpError.notFound("Order not found");
 
     const invoice = await getInvoiceForOrder(data.id);
+    // Registered customers have no guest_email on the order — look up their login email
+    let customerEmail: string | null = data.guest_email ?? null;
+    if (!customerEmail && data.customer_id) {
+      try {
+        const { data: u } = await supabaseAdmin.auth.admin.getUserById(data.customer_id);
+        customerEmail = u?.user?.email ?? null;
+      } catch {
+        customerEmail = null;
+      }
+    }
 
     res.json({
       ...toAdminOrderSummary(data),
@@ -95,8 +105,10 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
       shippingCost: Number(data.shipping_cost),
       giftWrapCost: Number(data.gift_wrap_cost),
       shippingAddress: data.shipping_address,
+      billingAddress: data.billing_address ?? null,
       shippingMethod: data.shipping_method,
       guestEmail: data.guest_email,
+      customerEmail,
       guestPhone: data.guest_phone,
       razorpayOrderId: data.razorpay_order_id,
       razorpayPaymentId: data.razorpay_payment_id,

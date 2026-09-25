@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "modules", "email", "templates");
 
 import {
-  T, SANS, SERIF, type Tone,
+  T, SANS,
   p, eyebrow, h1, sectionLabel, button, buttons, strip, progress, panel, kv, steps, note, helpLine,
   itemsEach, totals, shipAndPay, shell,
 } from "../src/modules/email/theme.js";

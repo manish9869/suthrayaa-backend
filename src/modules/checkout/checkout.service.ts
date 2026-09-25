@@ -16,7 +16,7 @@ import {
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 import { getShippingQuote } from "../settings/shipping.service.js";
-import { getSetting, getSettingsMap } from "../settings/settings.service.js";
+import { getSetting } from "../settings/settings.service.js";
 import { computeOrderGst } from "../settings/tax.service.js";
 import { getTaxCategories } from "../settings/taxCategories.service.js";
 

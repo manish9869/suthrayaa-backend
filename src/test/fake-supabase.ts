@@ -67,6 +67,16 @@ export class FakeSupabase {
   tables: Tables = {};
   rpcHandlers: Record<string, (args: any, db: FakeSupabase) => any> = {};
   counters: Record<string, number> = {};
+  /** Auth users by id, for the few `auth.admin` lookups the app makes. */
+  users: Record<string, { id: string; email: string }> = {};
+  auth = {
+    admin: {
+      getUserById: async (id: string) => {
+        const user = this.users[id];
+        return user ? { data: { user }, error: null } : { data: { user: null }, error: { message: "User not found" } };
+      },
+    },
+  };
 
   constructor(seed: Tables = {}) {
     this.reset(seed);
@@ -95,6 +105,7 @@ export class FakeSupabase {
   reset(seed: Tables = {}) {
     this.tables = JSON.parse(JSON.stringify(seed));
     this.counters = {};
+    this.users = {};
   }
 
   table(name: string) {

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
-import { api, auth, seed, placeCodOrder, ADDRESS, CUSTOMER_A, CUSTOMER_B, PRODUCT_ID } from "./helpers.js";
+import { api, auth, seed, placeCodOrder, ADDRESS, ADMIN_ID, CUSTOMER_A, CUSTOMER_B, PRODUCT_ID } from "./helpers.js";
 import { db } from "./db.js";
 
 beforeEach(() => seed());
@@ -140,5 +140,17 @@ describe("online payment", () => {
   it("refuses to pay for COD or already-paid orders", async () => {
     const { body } = await placeCodOrder(CUSTOMER_A);
     expect((await api().post(`/api/me/orders/${body.order.id}/pay`).set(auth(CUSTOMER_A))).status).toBe(400);
+  });
+});
+
+describe("admin order detail", () => {
+  it("shows the billing address and the registered customer's email", async () => {
+    db.users[CUSTOMER_A] = { id: CUSTOMER_A, email: "priya@example.com" };
+    const billingAddress = { ...ADDRESS, addressLine1: "22 Billing Street", pincode: "400002" };
+    const { body } = await placeCodOrder(CUSTOMER_A, undefined, { billingAddress });
+    const res = await api().get(`/api/admin/orders/${body.order.id}`).set(auth(ADMIN_ID));
+    expect(res.status).toBe(200);
+    expect(res.body.customerEmail).toBe("priya@example.com");
+    expect(res.body.billingAddress).toMatchObject({ addressLine1: "22 Billing Street", pincode: "400002" });
   });
 });
