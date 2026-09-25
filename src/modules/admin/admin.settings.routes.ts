@@ -290,10 +290,10 @@ adminInvoiceSettingsRouter.post("/preview", requirePermission("settings.view"), 
     }
 
     const pdf = await renderInvoicePdf(`${row.invoice_prefix || "INV"}-PREVIEW`, snapshot, "confirmed", "paid");
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", 'inline; filename="invoice-preview.pdf"');
+    // Sent as base64 JSON rather than application/pdf: download managers (IDM etc.) hijack any
+    // PDF response and turn every preview refresh into a download prompt.
     res.setHeader("Cache-Control", "no-store");
-    res.send(pdf);
+    res.json({ pdf: pdf.toString("base64") });
   } catch (err) {
     next(err);
   }
