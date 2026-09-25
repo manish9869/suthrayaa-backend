@@ -5,7 +5,7 @@ import { validate } from "../../middleware/validate.js";
 import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { HttpError } from "../../lib/httpError.js";
 import { env } from "../../config/env.js";
-import { validateAndPriceCart, placeOrder, verifyRazorpayPayment } from "./checkout.service.js";
+import { validateAndPriceCart, placeOrder, verifyRazorpayPayment, checkCartLines, getCheckoutOptions } from "./checkout.service.js";
 import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
 
 export const checkoutRouter = Router();
@@ -53,6 +53,24 @@ checkoutRouter.post(
   }
 );
 
+/** Payment and order rules the checkout shows before the customer commits to anything. */
+checkoutRouter.get("/options", async (_req, res, next) => {
+  try {
+    res.json(await getCheckoutOptions());
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Checks every cart line independently and returns all issues (never throws for a bad line). */
+checkoutRouter.post("/check-cart", optionalAuthenticate, validate(z.object({ items: z.array(cartItemSchema).max(100) })), async (req, res, next) => {
+  try {
+    res.json({ issues: await checkCartLines((req.body as { items: z.infer<typeof cartItemSchema>[] }).items) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const addressSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
@@ -73,6 +91,7 @@ const addressSchema = z.object({
 const placeOrderSchema = z.object({
   items: z.array(cartItemSchema).min(1),
   shippingAddress: addressSchema,
+  billingAddress: addressSchema.omit({ email: true }).optional(),
   shippingMethod: z.enum(["standard", "express"]),
   paymentMethod: z.enum(["cod", "razorpay"]),
   couponCode: z.string().optional(),

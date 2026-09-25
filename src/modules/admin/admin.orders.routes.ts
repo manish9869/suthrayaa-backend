@@ -131,7 +131,7 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
  * custom_order_confirmation template needs (line items, payment/shipping detail, store links).
  * Templates that don't reference a given {{var}} simply ignore it, so one comprehensive set
  * is passed regardless of which template type is actually being sent. */
-function buildOrderEmailData(order: any) {
+export function buildOrderEmailData(order: any) {
   const items = (order.order_items ?? []) as any[];
   const addr = order.shipping_address ?? {};
   const itemCount = items.reduce((s, i) => s + i.quantity, 0);
@@ -266,8 +266,10 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
       changed_by: req.admin!.id,
     });
 
-    // Cancelling/refunding returns any stock that was reserved for this order.
-    if ((body.status === "cancelled" || body.status === "refunded") && order.payment_status !== "refunded") {
+    // Cancelling/refunding returns stock — but only if it was actually taken: COD orders
+    // reserve stock at placement, online orders once paid. An unpaid online order never did.
+    const stockWasTaken = order.payment_method === "cod" || order.payment_status === "paid";
+    if ((body.status === "cancelled" || body.status === "refunded") && order.payment_status !== "refunded" && stockWasTaken) {
       const { data: items } = await supabaseAdmin
         .from("order_items")
         .select("product_id, quantity")
@@ -295,7 +297,8 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
         relatedOrderId: order.id,
       }).catch(() => {});
 
-      if (body.status === "cancelled" || body.status === "refunded") {
+      // A refund email only makes sense when money was actually taken
+      if ((body.status === "cancelled" || body.status === "refunded") && order.payment_status === "paid") {
         sendTemplatedEmail({
           type: "refund_processed",
           to: customerEmail,

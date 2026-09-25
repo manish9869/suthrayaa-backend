@@ -248,8 +248,10 @@ export async function validateAndPriceCart(
   }
 
   const netSubtotal = subtotal - discount;
-  const [shippingQuote, giftWrapFee, gstEnabled, pricesIncludeGst, sellerState, defaultTaxCategoryId] = await Promise.all([
-    getShippingQuote(opts.shippingState, netSubtotal, opts.shippingMethod === "express" ? "express" : "standard"),
+  const method = opts.shippingMethod === "express" ? "express" : "standard";
+  const [shippingQuote, altQuote, giftWrapFee, gstEnabled, pricesIncludeGst, sellerState, defaultTaxCategoryId] = await Promise.all([
+    getShippingQuote(opts.shippingState, netSubtotal, method),
+    getShippingQuote(opts.shippingState, netSubtotal, method === "express" ? "standard" : "express"),
     getSetting<number>("shipping.gift_wrap_fee"),
     getSetting<boolean>("tax.gst_enabled"),
     getSetting<boolean>("tax.prices_include_gst"),
@@ -310,6 +312,18 @@ export async function validateAndPriceCart(
     sgstAmount,
     igstAmount,
     shippingEstimate: shippingQuote.estimateDays,
+    // Everything the checkout needs to show delivery options without guessing client-side
+    shipping: {
+      method,
+      fee: shippingQuote.fee,
+      standardFee: method === "standard" ? shippingQuote.fee : altQuote.fee,
+      expressFee: method === "express" ? shippingQuote.fee : altQuote.fee,
+      freeShippingApplied: shippingQuote.freeShippingApplied,
+      estimateDays: shippingQuote.estimateDays,
+      zoneName: shippingQuote.zoneName,
+      codAvailable: shippingQuote.codAvailable,
+    },
+    giftWrapFee: Number(giftWrapFee ?? 0),
   };
 }
 
@@ -370,9 +384,66 @@ export interface ShippingAddressInput {
   pincode: string;
 }
 
+export interface CartLineIssue {
+  index: number;
+  productId: string;
+  message: string;
+  /** "unavailable" lines must be removed; "options" / "quantity" can be fixed on the product page. */
+  kind: "unavailable" | "options" | "quantity";
+}
+
+/**
+ * Checks every cart line on its own and reports all problems at once (instead of the first
+ * one, as validateAndPriceCart does) — so the cart and checkout can flag each line inline
+ * before the customer ever reaches payment.
+ */
+export async function checkCartLines(items: CartItemInput[]): Promise<CartLineIssue[]> {
+  const issues: CartLineIssue[] = [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    try {
+      await validateAndPriceCart([item]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "This item can't be ordered right now";
+      const kind: CartLineIssue["kind"] = /no longer available/i.test(message)
+        ? "unavailable"
+        : /left in stock|quantity/i.test(message)
+          ? "quantity"
+          : "options";
+      issues.push({ index, productId: item.productId, message, kind });
+    }
+  }
+  return issues;
+}
+
+/** Payment / order rules the checkout shows up front (all admin-configured settings). */
+export async function getCheckoutOptions() {
+  const [razorpayEnabled, codEnabled, codMin, codMax, orderMin, orderMax, giftWrapFee] = await Promise.all([
+    getSetting<boolean>("payment.razorpay_enabled"),
+    getSetting<boolean>("payment.cod_enabled"),
+    getSetting<number>("payment.cod_min_amount"),
+    getSetting<number>("payment.cod_max_amount"),
+    getSetting<number>("order.min_amount"),
+    getSetting<number>("order.max_amount"),
+    getSetting<number>("shipping.gift_wrap_fee"),
+  ]);
+  return {
+    payment: {
+      razorpayEnabled: Boolean(razorpayEnabled),
+      codEnabled: Boolean(codEnabled),
+      codMin: Number(codMin ?? 0),
+      codMax: Number(codMax ?? 0),
+    },
+    order: { min: Number(orderMin ?? 0), max: Number(orderMax ?? 0) },
+    giftWrap: { fee: Number(giftWrapFee ?? 0) },
+  };
+}
+
 export interface PlaceOrderInput {
   items: CartItemInput[];
   shippingAddress: ShippingAddressInput;
+  /** Omitted when billing is the same as shipping. */
+  billingAddress?: ShippingAddressInput;
   shippingMethod: string;
   paymentMethod: "cod" | "razorpay";
   couponCode?: string;
@@ -401,6 +472,9 @@ export async function placeOrder(input: PlaceOrderInput) {
     shippingState: input.shippingAddress.state,
   });
 
+  if (input.paymentMethod === "cod" && !priced.shipping.codAvailable) {
+    throw HttpError.badRequest(`Cash on Delivery isn't available for ${input.shippingAddress.state} — please pay online`);
+  }
   if (orderMin > 0 && priced.total < orderMin) throw HttpError.badRequest(`Minimum order amount is ${formatPrice(orderMin)}`);
   if (orderMax > 0 && priced.total > orderMax) throw HttpError.badRequest(`Maximum order amount is ${formatPrice(orderMax)}`);
 
@@ -430,6 +504,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       sgst_amount: priced.sgstAmount,
       igst_amount: priced.igstAmount,
       shipping_address: input.shippingAddress,
+      billing_address: input.billingAddress ?? null,
       shipping_method: input.shippingMethod,
       payment_method: input.paymentMethod,
       payment_status: "pending",
@@ -507,6 +582,34 @@ export async function placeOrder(input: PlaceOrderInput) {
   await supabaseAdmin.from("orders").update({ razorpay_order_id: razorpayOrder.id }).eq("id", order.id);
 
   return { order: { ...order, razorpay_order_id: razorpayOrder.id }, razorpayOrder };
+}
+
+/**
+ * Starts a fresh Razorpay payment for an order that's still awaiting payment (the customer
+ * closed the payment window or the payment failed) — used by "Pay now" on the order page.
+ */
+export async function createPaymentForExistingOrder(orderId: string, customerId: string) {
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("id, order_number, total, status, payment_status, payment_method, customer_id")
+    .eq("id", orderId)
+    .eq("customer_id", customerId)
+    .maybeSingle();
+  if (!order) throw HttpError.notFound("Order not found");
+  if (order.payment_method !== "razorpay") throw HttpError.badRequest("This order is paid on delivery");
+  if (order.payment_status === "paid") throw HttpError.badRequest("This order is already paid");
+  if (order.status !== "pending_payment") throw HttpError.badRequest("This order can no longer be paid online");
+  const razorpayEnabled = await getSetting<boolean>("payment.razorpay_enabled");
+  if (!razorpayEnabled) throw HttpError.badRequest("Online payment is currently unavailable");
+
+  const razorpayOrder = await razorpay.orders.create({
+    amount: Math.round(Number(order.total) * 100),
+    currency: "INR",
+    receipt: order.order_number,
+    notes: { orderId: order.id },
+  });
+  await supabaseAdmin.from("orders").update({ razorpay_order_id: razorpayOrder.id, payment_status: "pending" }).eq("id", order.id);
+  return { order, razorpayOrder };
 }
 
 async function redeemCoupon(couponId: string, orderId: string, customerId: string | undefined, amount: number) {
