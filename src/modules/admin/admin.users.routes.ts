@@ -254,7 +254,7 @@ adminUsersRouter.post("/:id/reset-password", requirePermission("users.update"), 
            A password reset was requested for your Suthrayaa admin account. Click below to choose a new password. If you didn't request this, you can ignore this email.
          </p>
          <p style="text-align:center;margin:24px 0;">
-           <a href="${link.properties.action_link}" style="display:inline-block;background:#6d4aff;color:#fff;text-decoration:none;padding:12px 28px;border-radius:100px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;">Reset Password</a>
+           <a href="${link.properties.action_link}" style="display:inline-block;background:#c1502e;color:#fff;text-decoration:none;padding:12px 28px;border-radius:100px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;">Reset Password</a>
          </p>`
       );
       await resendLoggedEmail(authUser.user.email, "Reset your Suthrayaa admin password", html);
@@ -323,7 +323,7 @@ adminUsersRouter.post(
              You've been invited to join the Suthrayaa admin panel as <strong>${roleNames}</strong>. This link is valid for 7 days and can only be used once.
            </p>
            <p style="text-align:center;margin:24px 0;">
-             <a href="${inviteUrl}" style="display:inline-block;background:#6d4aff;color:#fff;text-decoration:none;padding:12px 28px;border-radius:100px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;">Accept Invite</a>
+             <a href="${inviteUrl}" style="display:inline-block;background:#c1502e;color:#fff;text-decoration:none;padding:12px 28px;border-radius:100px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;">Accept Invite</a>
            </p>`
         );
         await resendLoggedEmail(email, "You've been invited to Suthrayaa Admin", html);

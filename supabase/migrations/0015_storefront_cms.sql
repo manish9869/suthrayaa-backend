@@ -8,6 +8,12 @@
 --  • homepage_sections      — four previously fixed homepage sections become toggleable and
 --                            reorderable, and section headings are now actually rendered.
 
+-- Catch-up from 0012 (found missing on the live database): Indian address fields used by the
+-- account address book and checkout. Idempotent — a no-op where 0012 fully applied.
+alter table addresses add column if not exists landmark text;
+alter table addresses add column if not exists district text;
+alter table addresses add column if not exists address_type text check (address_type in ('home', 'work', 'other'));
+
 create table if not exists page_content (
   key text primary key,
   value jsonb not null,
@@ -70,21 +76,6 @@ update homepage_sections set title = 'Join the Suthrayaa circle', description = 
 update homepage_sections set enabled = false
   where section_key in ('trending', 'sale_products', 'collections', 'newsletter')
     and updated_at = created_at;
-
--- Branding colours are now applied to the storefront. Their old catalog defaults were a legacy
--- terracotta palette the site no longer uses; any row still holding one of those untouched
--- defaults is moved to the current theme so turning the feature on changes nothing visually.
-update site_settings set value = to_jsonb(v.new_value), updated_at = now()
-from (values
-  ('branding.color_primary', '#c1502e', '#6d4aff'),
-  ('branding.color_secondary', '#7c9473', '#ff9e7a'),
-  ('branding.color_accent', '#d8a13b', '#f5b544'),
-  ('branding.color_background', '#fbf6ee', '#fcfbff'),
-  ('branding.color_text', '#3a2a1f', '#1f1a33'),
-  ('branding.color_success', '#2fdc84', '#1e7a48'),
-  ('branding.color_error', '#d64545', '#e5484d')
-) as v(key, old_value, new_value)
-where site_settings.key = v.key and site_settings.value = to_jsonb(v.old_value);
 
 -- Footer links seeded to pages that never existed (404s): point them at real pages.
 update footer_links set url = '/account/orders' where url = '/track-order';

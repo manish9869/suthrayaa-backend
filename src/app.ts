@@ -15,6 +15,7 @@ import { env } from "./config/env.js";
 import { supabaseAdmin } from "./config/supabase.js";
 import { logger } from "./lib/logger.js";
 import { publicContentRouter, adminContentRouter } from "./modules/content/content.routes.js";
+import { publicThemeRouter, adminThemeRouter } from "./modules/theme/theme.routes.js";
 import { newsletterRouter, adminNewsletterRouter } from "./modules/content/newsletter.routes.js";
 import { buildOpenApiSpec, SWAGGER_UI_HTML, SWAGGER_UI_CSP } from "./docs/openapi.js";
 import { warmSettingsCache } from "./modules/settings/settings.service.js";
@@ -126,6 +127,7 @@ export function createApp() {
   app.use("/api/footer-links", publicFooterRouter);
   app.use("/api/homepage-sections", publicHomepageSectionsRouter);
   app.use("/api/content", publicContentRouter);
+  app.use("/api/theme", publicThemeRouter);
   app.use("/api/newsletter", newsletterRouter);
 
   // Customer-facing
@@ -156,6 +158,7 @@ export function createApp() {
   app.use("/api/admin/permissions", adminPermissionsRouter);
   app.use("/api/admin/audit-logs", adminAuditLogsRouter);
   app.use("/api/admin/content", adminContentRouter);
+  app.use("/api/admin/theme", adminThemeRouter);
   app.use("/api/admin/newsletter", adminNewsletterRouter);
 
   // API documentation — generated from this route table (see src/docs/openapi.ts)
