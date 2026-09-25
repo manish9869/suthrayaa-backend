@@ -1,5 +1,8 @@
 import { supabaseAdmin } from "../../config/supabase.js";
 import { getSetting } from "../settings/settings.service.js";
+import { computeOrderGst, type OrderGstComputed, type OrderGstSummaryRow } from "../settings/tax.service.js";
+import { stateCodeFor } from "../settings/india.data.js";
+import { getTaxCategories } from "../settings/taxCategories.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -59,6 +62,94 @@ export interface InvoiceSnapshot {
   taxLabel: string;
 
   total: number;
+
+  /** Present on GST tax invoices (registered business with GST enabled). Older snapshots
+   * don't have it and render from the order-level CGST/SGST/IGST figures above. */
+  gst?: InvoiceGst;
+}
+
+export interface InvoiceGst {
+  legalName: string | null;
+  gstin: string;
+  pan: string | null;
+  supplierState: string | null;
+  supplierStateCode: string | null;
+  placeOfSupply: string | null;
+  placeOfSupplyCode: string | null;
+  isInterState: boolean;
+  pricesIncludeGst: boolean;
+  /** One entry per `items[i]`. */
+  lines: OrderGstComputed[];
+  /** Shipping / gift wrap, taxed at the principal supply's rate. */
+  charges: OrderGstComputed[];
+  summary: OrderGstSummaryRow[];
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  totalTax: number;
+  /** order total − (taxable value + tax); normally 0. */
+  roundOff: number;
+}
+
+/** Builds the GST section of an invoice, or null when the business isn't set up for GST. */
+async function buildInvoiceGst(order: any, settings: any): Promise<InvoiceGst | null> {
+  const gstin = settings?.is_gst_registered ? String(settings?.gstin ?? "").trim() : "";
+  if (!gstin) return null;
+  const [gstEnabled, pricesIncludeGst, businessGstState, defaultTaxCategoryId] = await Promise.all([
+    getSetting<boolean>("tax.gst_enabled").catch(() => false),
+    getSetting<boolean>("tax.prices_include_gst").catch(() => true),
+    getSetting<string>("business.gst_state").catch(() => ""),
+    getSetting<string>("tax.default_tax_category_id").catch(() => ""),
+  ]);
+  const supplierState = String(settings?.gst_state || businessGstState || "").trim() || null;
+  const buyerState = String(order.shipping_address?.state ?? "").trim() || null;
+  if (!gstEnabled || !supplierState || !buyerState) return null;
+
+  const items: any[] = order.order_items ?? [];
+  const productIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
+  const { data: products } = productIds.length
+    ? await supabaseAdmin.from("products").select("id, tax_category_id").in("id", productIds)
+    : { data: [] as any[] };
+  const categoryOf = new Map((products ?? []).map((p: any) => [p.id, p.tax_category_id as string | null]));
+  const categories = await getTaxCategories();
+  const fallback = categories.get(defaultTaxCategoryId);
+
+  const gst = computeOrderGst({
+    lines: items.map((i) => {
+      const cat = categories.get(categoryOf.get(i.product_id) ?? "") ?? fallback;
+      return { amount: Number(i.line_total), ratePercent: cat?.rate ?? 0, hsn: cat?.hsn ?? null };
+    }),
+    discount: Number(order.discount_amount ?? 0),
+    charges: [
+      { label: "Shipping", amount: Number(order.shipping_cost ?? 0) },
+      { label: "Gift wrap", amount: Number(order.gift_wrap_cost ?? 0) },
+    ],
+    sellerState: supplierState,
+    buyerState,
+    pricesIncludeGst,
+  });
+
+  return {
+    legalName: String(settings?.gst_legal_name ?? "").trim() || null,
+    gstin,
+    pan: String(settings?.pan ?? "").trim() || (gstin.length === 15 ? gstin.slice(2, 12) : null),
+    supplierState,
+    supplierStateCode: String(settings?.gst_state_code ?? "").trim() || stateCodeFor(supplierState) || null,
+    placeOfSupply: buyerState,
+    placeOfSupplyCode: stateCodeFor(buyerState) ?? null,
+    isInterState: gst.isInterState,
+    pricesIncludeGst,
+    lines: gst.lines,
+    charges: gst.charges,
+    summary: gst.summary,
+    taxableValue: gst.taxableValue,
+    cgst: gst.cgst,
+    sgst: gst.sgst,
+    igst: gst.igst,
+    totalTax: gst.totalTax,
+    roundOff: Math.round((Number(order.total) - gst.grandTotal) * 100) / 100,
+  };
 }
 
 /* ============================================================
@@ -160,6 +251,9 @@ export async function createInvoiceForOrder(orderId: string) {
 
     total: Number(order.total),
   };
+
+  const gst = await buildInvoiceGst(order, settings);
+  if (gst) snapshot.gst = gst;
 
   const { data: invoice, error } = await supabaseAdmin
     .from("invoices")

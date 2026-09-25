@@ -17,7 +17,8 @@ import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 import { getShippingQuote } from "../settings/shipping.service.js";
 import { getSetting, getSettingsMap } from "../settings/settings.service.js";
-import { computeGst } from "../settings/tax.service.js";
+import { computeOrderGst } from "../settings/tax.service.js";
+import { getTaxCategories } from "../settings/taxCategories.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -268,35 +269,32 @@ export async function validateAndPriceCart(
   let total = Math.round((netSubtotal + shippingCost + giftWrapCost) * 100) / 100;
 
   if (gstEnabled && opts.shippingState && sellerState) {
-    const rateByCategoryId = await getTaxRatesByCategory();
+    const categories = await getTaxCategories();
+    const fallback = categories.get(defaultTaxCategoryId);
+    // Per-line rates (carts can mix categories); the discount is apportioned before tax and
+    // shipping / gift wrap are taxed at the principal item's rate — see computeOrderGst.
+    const gst = computeOrderGst({
+      lines: lines.map((line) => {
+        const cat = categories.get(line.taxCategoryId ?? "") ?? fallback;
+        return { amount: line.lineTotal, ratePercent: cat?.rate ?? 0, hsn: cat?.hsn ?? null };
+      }),
+      discount,
+      charges: [
+        { label: "Shipping", amount: shippingCost },
+        { label: "Gift wrap", amount: giftWrapCost },
+      ],
+      sellerState,
+      buyerState: opts.shippingState,
+      pricesIncludeGst,
+    });
+    taxAmount = gst.totalTax;
+    cgstAmount = gst.cgst;
+    sgstAmount = gst.sgst;
+    igstAmount = gst.igst;
 
-    // Compute GST per line (rates can differ by product) rather than on the pooled
-    // subtotal, then sum — correct even when the cart mixes tax categories.
-    let totalTax = 0;
-    for (const line of lines) {
-      const rate = rateByCategoryId.get(line.taxCategoryId ?? "") ?? rateByCategoryId.get(defaultTaxCategoryId) ?? 0;
-      const gst = computeGst({
-        amount: line.lineTotal,
-        ratePercent: rate,
-        sellerState,
-        buyerState: opts.shippingState,
-        pricesIncludeGst,
-      });
-      totalTax += gst.totalTax;
-      cgstAmount += gst.cgst;
-      sgstAmount += gst.sgst;
-      igstAmount += gst.igst;
-    }
-    taxAmount = Math.round(totalTax * 100) / 100;
-    cgstAmount = Math.round(cgstAmount * 100) / 100;
-    sgstAmount = Math.round(sgstAmount * 100) / 100;
-    igstAmount = Math.round(igstAmount * 100) / 100;
-
-    // Inclusive pricing: tax is already inside netSubtotal, so the total doesn't change —
+    // Inclusive pricing: tax is already inside the prices, so the total doesn't change —
     // only the breakdown is stored, for invoice display. Exclusive pricing adds it on top.
-    if (!pricesIncludeGst) {
-      total = Math.round((netSubtotal + shippingCost + giftWrapCost + taxAmount) * 100) / 100;
-    }
+    if (!pricesIncludeGst) total = gst.grandTotal;
   }
 
   return {
@@ -315,13 +313,6 @@ export async function validateAndPriceCart(
   };
 }
 
-let taxRateCache: Map<string, number> | null = null;
-async function getTaxRatesByCategory(): Promise<Map<string, number>> {
-  if (taxRateCache) return taxRateCache;
-  const { data } = await supabaseAdmin.from("tax_categories").select("id, rate");
-  taxRateCache = new Map((data ?? []).map((r: any) => [r.id, Number(r.rate)]));
-  return taxRateCache;
-}
 
 export async function validateCoupon(code: string, subtotal: number, customerId?: string) {
   const { data: coupon } = await supabaseAdmin
