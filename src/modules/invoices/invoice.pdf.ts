@@ -128,6 +128,15 @@ function money(amount: number, currency: string, rupee: boolean) {
   }
 }
 
+/** "9984112400" / "+919984112400" → "+91 99841 12400"; anything else is returned as-is. */
+function formatPhone(v: unknown): string | null {
+  const raw = clean(v);
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  const local = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits.length === 11 && digits.startsWith("0") ? digits.slice(1) : digits;
+  return local.length === 10 ? `+91 ${local.slice(0, 5)} ${local.slice(5)}` : raw;
+}
+
 /** Indian-system amount in words, e.g. 2,284 → "Two Thousand Two Hundred Eighty-Four Rupees Only". */
 function amountInWords(amount: number): string {
   const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
@@ -197,9 +206,17 @@ export async function renderInvoicePdf(
     const FOOTER_H = 64;
     const BOTTOM = H - FOOTER_H - 8;
 
-    const text = (s: string, x: number, y: number, o: { font?: FontKey; size?: number; color?: string; width?: number; align?: "left" | "right" | "center"; spacing?: number; lineGap?: number } = {}) => {
+    const text = (s: string, x: number, y: number, o: { font?: FontKey; size?: number; color?: string; width?: number; align?: "left" | "right" | "center"; spacing?: number; lineGap?: number; tnum?: boolean } = {}) => {
       doc.font(f[o.font ?? "sans"]).fontSize(o.size ?? 9).fillColor(o.color ?? C.text);
-      doc.text(s, x, y, { width: o.width, align: o.align ?? "left", characterSpacing: o.spacing ?? 0, lineGap: o.lineGap ?? 1.5, lineBreak: o.width !== undefined });
+      doc.text(s, x, y, {
+        width: o.width,
+        align: o.align ?? "left",
+        characterSpacing: o.spacing ?? 0,
+        lineGap: o.lineGap ?? 1.5,
+        lineBreak: o.width !== undefined,
+        // tabular figures keep digits the same width, so numeric columns line up
+        ...(o.tnum && rupee ? { features: ["tnum"] as any } : {}),
+      });
     };
     const height = (s: string, width: number, font: FontKey, size: number, lineGap = 1.5) => {
       doc.font(f[font]).fontSize(size);
@@ -251,7 +268,7 @@ export async function renderInvoicePdf(
       text("Handcrafted crochet, made to order", bx, 72, { font: "serifItalic", size: 9.5, color: C.lilacText });
       const contact = [
         clean(snapshot.business.address)?.replace(/\n+/g, ", "),
-        [clean(snapshot.business.email), clean(snapshot.business.phone)].filter(Boolean).join("  ·  "),
+        [clean(snapshot.business.email), formatPhone(snapshot.business.phone)].filter(Boolean).join("  ·  "),
         snapshot.business.gstin ? `GSTIN ${snapshot.business.gstin}` : snapshot.business.taxNumber ? `Tax No. ${snapshot.business.taxNumber}` : null,
       ].filter(Boolean) as string[];
       let cy = 104;
@@ -292,7 +309,7 @@ export async function renderInvoicePdf(
     const addr = snapshot.shippingAddress ?? {};
     const shipName = clean(`${addr.firstName ?? ""} ${addr.lastName ?? ""}`) ?? clean(addr.fullName) ?? snapshot.customerName;
     const columns = [
-      { title: "Billed to", head: snapshot.customerName, lines: [clean(snapshot.customerEmail), clean(snapshot.customerPhone)] },
+      { title: "Billed to", head: snapshot.customerName, lines: [clean(snapshot.customerEmail), formatPhone(snapshot.customerPhone)] },
       {
         title: "Ship to",
         head: shipName,
@@ -302,7 +319,7 @@ export async function renderInvoicePdf(
           clean(addr.landmark),
           [clean(addr.city), clean(addr.state)].filter(Boolean).join(", ") + (clean(addr.pincode) ? ` ${addr.pincode}` : ""),
           clean(addr.country),
-          clean(addr.phone) ?? clean(snapshot.customerPhone),
+          formatPhone(addr.phone) ?? formatPhone(snapshot.customerPhone),
         ],
       },
       {
@@ -316,7 +333,6 @@ export async function renderInvoicePdf(
     let colsH = 0;
     columns.forEach((col, i) => {
       const x = M + i * (colW + gap);
-      if (i > 0) doc.moveTo(x - gap / 2, y).lineTo(x - gap / 2, y + 80).lineWidth(0.7).strokeColor(C.border).stroke();
       label(col.title, x, y);
       text(col.head, x, y + 14, { font: "sansSemi", size: 10.5, color: C.text, width: colW });
       let ly = y + 14 + height(col.head, colW, "sansSemi", 10.5) + 3;
@@ -326,11 +342,23 @@ export async function renderInvoicePdf(
       }
       colsH = Math.max(colsH, ly - y);
     });
-    y += Math.max(colsH, 80) + 18;
+    colsH = Math.max(colsH, 60);
+    for (let i = 1; i < columns.length; i++) {
+      const x = M + i * (colW + gap) - gap / 2;
+      doc.moveTo(x, y).lineTo(x, y + colsH).lineWidth(0.7).strokeColor(C.border).stroke();
+    }
+    y += colsH + 18;
+
+    // items caption: "2 items · 4 units"
+    const units = snapshot.items.reduce((a, it) => a + (Number(it.quantity) || 0), 0);
+    label("Order items", M, y);
+    text(`${snapshot.items.length} ${snapshot.items.length === 1 ? "item" : "items"}  ·  ${units} ${units === 1 ? "unit" : "units"}`, R - 200, y - 0.5, { size: 7.8, color: C.muted, width: 200, align: "right" });
+    y += 14;
 
     /* ---------- items table ---------- */
     const showSku = snapshot.business.showSku;
-    const col = { idx: M + 12, item: M + 34, qty: R - 190, unit: R - 150, amount: R - 90 };
+    const NUM_R = R - 12; // right edge shared by every amount on the page
+    const col = { idx: M + 12, item: M + 38, qty: R - 196, unit: R - 160, amount: NUM_R - 80 };
     const itemW = col.qty - col.item - 12;
 
     const drawTableHead = () => {
@@ -339,8 +367,8 @@ export async function renderInvoicePdf(
       text("#", col.idx, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1 });
       text("ITEM", col.item, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1 });
       text("QTY", col.qty, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1, width: 30, align: "center" });
-      text("UNIT PRICE", col.unit, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1, width: 58, align: "right" });
-      text("AMOUNT", col.amount, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1, width: 78, align: "right" });
+      text("UNIT PRICE", col.unit, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1, width: 66, align: "right" });
+      text("AMOUNT", col.amount, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1, width: 80, align: "right" });
       y += 26;
     };
 
@@ -370,7 +398,7 @@ export async function renderInvoicePdf(
         drawTableHead();
       }
       const ty = y + 11;
-      text(String(i + 1).padStart(2, "0"), col.idx, ty + 1, { font: "sans", size: 8, color: C.faint });
+      text(String(i + 1).padStart(2, "0"), col.idx, ty + 1.6, { font: "sans", size: 8, color: C.faint, tnum: true });
       text(item.name, col.item, ty, { font: "sansSemi", size: 10, color: C.text, width: itemW });
       let dy = ty + nameH + 2;
       if (detailText) {
@@ -378,9 +406,9 @@ export async function renderInvoicePdf(
         dy += detailH;
       }
       if (showSku && item.sku) text(`SKU ${item.sku}`, col.item, dy, { size: 7.2, color: C.faint, width: itemW, spacing: 0.3 });
-      text(String(item.quantity), col.qty, ty + 1, { size: 9.5, width: 30, align: "center" });
-      text(fmt(item.unitPrice), col.unit, ty + 1, { size: 9.5, width: 58, align: "right", color: C.muted });
-      text(fmt(item.lineTotal), col.amount, ty + 1, { font: "sansSemi", size: 10, width: 78, align: "right" });
+      text(String(item.quantity), col.qty, ty + 0.4, { size: 9.5, width: 30, align: "center", tnum: true });
+      text(fmt(item.unitPrice), col.unit, ty + 0.4, { size: 9.5, width: 66, align: "right", color: C.muted, tnum: true });
+      text(fmt(item.lineTotal), col.amount, ty, { font: "sansSemi", size: 10, width: 80, align: "right", tnum: true });
       y += rowH;
       hair(M, R, y);
     });
@@ -403,38 +431,40 @@ export async function renderInvoicePdf(
     const taxInclusive = taxLines.length > 0 && Math.abs(snapshot.total - preTax) < 0.5;
     if (!taxInclusive) rows.push(...taxLines);
 
-    const blockH = rows.length * 19 + 64 + (taxInclusive ? 16 : 0);
-    if (y + 16 + blockH > BOTTOM) newPage();
-    y += 16;
+    const blockH = rows.length * 18 + 66 + (taxInclusive ? 18 : 0);
+    if (y + 14 + blockH > BOTTOM) newPage();
+    y += 14;
 
-    const tx = R - 230;
+    const tx = R - 222; // labels; the total panel starts 12pt left of this
     const top = y;
     for (const r of rows) {
       text(r.label, tx, y, { size: 9, color: C.muted, width: 120 });
-      text(r.value, tx + 110, y, { font: "sansSemi", size: 9.5, color: r.color ?? C.text, width: 120, align: "right" });
-      y += 19;
+      text(r.value, NUM_R - 130, y, { font: "sansSemi", size: 9.5, color: r.color ?? C.text, width: 130, align: "right", tnum: true });
+      y += 18;
     }
     y += 4;
-    doc.roundedRect(tx - 12, y, 242, 44, 12).fill(C.ink);
-    text("TOTAL", tx, y + 17, { font: "sansBold", size: 8, color: C.lilacText, spacing: 1.6 });
-    text(fmt(snapshot.total), tx + 60, y + 11, { font: "serif", size: 19, color: C.white, width: 160, align: "right" });
-    y += 44;
+    const panelY = y;
+    doc.roundedRect(tx - 12, y, R - (tx - 12), 46, 12).fill(C.ink);
+    text("TOTAL", tx, y + 18.5, { font: "sansBold", size: 8, color: C.lilacText, spacing: 1.6 });
+    text(fmt(snapshot.total), NUM_R - 170, y + 12, { font: "serif", size: 19, color: C.white, width: 170, align: "right", tnum: true });
+    y += 46;
     if (taxInclusive) {
       y += 6;
-      text(`Includes ${taxLines.map((t) => `${t.label} ${t.value}`).join(" · ")}`, tx, y, { size: 7.8, color: C.muted, width: 230, align: "right" });
+      text(`Includes ${taxLines.map((t) => `${t.label} ${t.value}`).join(" · ")}`, tx - 12, y, { size: 7.8, color: C.muted, width: NUM_R - (tx - 12), align: "right", tnum: true });
       y += 12;
     }
 
     // left of totals: amount in words + payment
     const lx = M;
-    const lw = tx - M - 36;
+    const lw = tx - 12 - M - 28;
     label("Amount in words", lx, top);
     text(currency === "INR" ? amountInWords(snapshot.total) : `${fmt(snapshot.total)} only`, lx, top + 13, { font: "serifItalic", size: 10.5, color: C.text, width: lw, lineGap: 2 });
-    const py = top + 13 + height(currency === "INR" ? amountInWords(snapshot.total) : fmt(snapshot.total), lw, "serifItalic", 10.5, 2) + 16;
-    doc.roundedRect(lx, py, lw, 44, 10).fill(C.lilacBg);
-    label("Payment", lx + 14, py + 10, C.violet);
-    text(`${paymentMethodLabel(snapshot.paymentMethod)}  ·  ${titleCase(livePaymentStatus || "pending")}`, lx + 14, py + 23, { font: "sansSemi", size: 9.5, width: lw - 28 });
-    y = Math.max(y, py + 44) + 14;
+    const wordsBottom = top + 13 + height(currency === "INR" ? amountInWords(snapshot.total) : fmt(snapshot.total), lw, "serifItalic", 10.5, 2);
+    const py = Math.max(panelY, wordsBottom + 14);
+    doc.roundedRect(lx, py, lw, 46, 12).fill(C.lilacBg);
+    label("Payment", lx + 14, py + 11, C.violet);
+    text(`${paymentMethodLabel(snapshot.paymentMethod)}  ·  ${titleCase(livePaymentStatus || "pending")}`, lx + 14, py + 24, { font: "sansSemi", size: 9.5, width: lw - 28 });
+    y = Math.max(y, py + 46) + 12;
 
     /* ---------- terms ---------- */
     const terms = clean(snapshot.business.terms);
@@ -454,9 +484,11 @@ export async function renderInvoicePdf(
       doc.rect(0, fy, W, FOOTER_H).fill(C.lilacBg);
       stitchWave(M, R, fy, C.violet, 0.35);
       const thanks = clean(snapshot.business.footer) ?? `Thank you for supporting handmade · ${snapshot.business.name || "Suthrayaa"}`;
-      text(thanks, M, fy + 20, { font: "serifItalic", size: 9.5, color: C.ink, width: CW - 130 });
-      text("This is a computer-generated invoice and needs no signature.", M, fy + 40, { size: 7, color: C.faint, width: CW - 130 });
-      text(`Page ${p - range.start + 1} of ${range.count}`, R - 120, fy + 24, { font: "sansSemi", size: 8, color: C.muted, width: 120, align: "right" });
+      text(thanks, M, fy + 20, { font: "serifItalic", size: 9.5, color: C.ink, width: CW - 200 });
+      text("This is a computer-generated invoice and needs no signature.", M, fy + 38, { size: 7, color: C.faint, width: CW - 200 });
+      text(`Page ${p - range.start + 1} of ${range.count}`, R - 190, fy + 21.4, { font: "sansSemi", size: 8, color: C.muted, width: 190, align: "right" });
+      const contactLine = [clean(snapshot.business.email), formatPhone(snapshot.business.phone)].filter(Boolean).join("  ·  ");
+      if (contactLine) text(contactLine, R - 190, fy + 38, { size: 7, color: C.faint, width: 190, align: "right" });
     }
 
     doc.end();
