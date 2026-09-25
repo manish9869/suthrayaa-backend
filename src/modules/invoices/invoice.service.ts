@@ -35,6 +35,16 @@ export interface InvoiceSnapshot {
     showSku: boolean;
     showTax: boolean;
     showCustomizationPricing: boolean;
+    // Design options — optional so snapshots taken before they existed render as before
+    tagline?: string | null;
+    headerStyle?: "dark" | "light";
+    accent?: "peach" | "violet" | "rose" | "teal";
+    showHsn?: boolean;
+    showGstSummary?: boolean;
+    showAmountInWords?: boolean;
+    showPayment?: boolean;
+    showSignature?: boolean;
+    signatoryName?: string | null;
   };
 
   orderNumber: string;
@@ -92,8 +102,23 @@ export interface InvoiceGst {
   roundOff: number;
 }
 
+/** Invoice design options from an invoice_settings row (defaults = the standard layout). */
+export function invoiceDesignFromSettings(settings: any) {
+  return {
+    tagline: settings?.tagline ?? "Handcrafted crochet, made to order",
+    headerStyle: settings?.header_style === "light" ? ("light" as const) : ("dark" as const),
+    accent: (["peach", "violet", "rose", "teal"].includes(settings?.accent) ? settings.accent : "peach") as "peach" | "violet" | "rose" | "teal",
+    showHsn: settings?.show_hsn ?? true,
+    showGstSummary: settings?.show_gst_summary ?? true,
+    showAmountInWords: settings?.show_amount_in_words ?? true,
+    showPayment: settings?.show_payment ?? true,
+    showSignature: settings?.show_signature ?? true,
+    signatoryName: settings?.signatory_name ?? null,
+  };
+}
+
 /** Builds the GST section of an invoice, or null when the business isn't set up for GST. */
-async function buildInvoiceGst(order: any, settings: any): Promise<InvoiceGst | null> {
+export async function buildInvoiceGst(order: any, settings: any): Promise<InvoiceGst | null> {
   const gstin = settings?.is_gst_registered ? String(settings?.gstin ?? "").trim() : "";
   if (!gstin) return null;
   const [gstEnabled, pricesIncludeGst, businessGstState, defaultTaxCategoryId] = await Promise.all([
@@ -206,6 +231,7 @@ export async function createInvoiceForOrder(orderId: string) {
       showTax: settings?.show_tax ?? true,
       showCustomizationPricing:
         settings?.show_customization_pricing ?? true,
+      ...invoiceDesignFromSettings(settings),
     },
 
     orderNumber: order.order_number,

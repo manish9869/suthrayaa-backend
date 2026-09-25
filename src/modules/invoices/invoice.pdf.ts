@@ -32,6 +32,14 @@ const C = {
   goldBg: "#FEF0D7",
 };
 
+/** Accent palettes selectable on the Invoice Settings page. */
+const ACCENTS = {
+  peach: { label: "#F28A63", wave: "#FF9E7A", soft: C.violetSoft, strong: C.violet },
+  violet: { label: "#6D4AFF", wave: "#B9A8FF", soft: C.violetSoft, strong: "#6D4AFF" },
+  rose: { label: "#D9546F", wave: "#F2A0B1", soft: "#FCE9EE", strong: "#C23B59" },
+  teal: { label: "#0E8C80", wave: "#5CC5B9", soft: "#E1F4F1", strong: "#0E7C72" },
+} as const;
+
 /* ============================================================
    FONTS & ASSETS (repo-root /assets, resolved from src or dist)
    ============================================================ */
@@ -198,8 +206,22 @@ export async function renderInvoicePdf(
   liveStatus: string,
   livePaymentStatus: string,
 ): Promise<Buffer> {
-  const whiteLogo = await whiteLogoBuffer();
-  const logo = whiteLogo ? null : await fetchLogoBuffer(snapshot.business.logoUrl);
+  const b = snapshot.business;
+  const light = b.headerStyle === "light";
+  const whiteLogo = light ? null : await whiteLogoBuffer();
+  const logo = whiteLogo ? null : await fetchLogoBuffer(light ? null : b.logoUrl);
+  const A = ACCENTS[b.accent ?? "peach"] ?? ACCENTS.peach;
+  // Header band colours for the dark (ink) or light (lilac) style
+  const HB = light
+    ? { bg: C.lilacBg, title: C.ink, sub: C.muted, body: C.muted, number: C.ink, ring: A.strong }
+    : { bg: C.ink, title: C.white, sub: C.lilacText, body: "#D9D2F5", number: C.white, ring: C.violet };
+  const show = {
+    hsn: b.showHsn !== false,
+    gstSummary: b.showGstSummary !== false,
+    words: b.showAmountInWords !== false,
+    payment: b.showPayment !== false,
+    signature: b.showSignature !== false,
+  };
   const gst = snapshot.gst ?? null;
 
   return new Promise((resolve, reject) => {
@@ -239,7 +261,7 @@ export async function renderInvoicePdf(
       doc.font(f[font]).fontSize(size);
       return doc.heightOfString(s, { width, lineGap });
     };
-    const label = (s: string, x: number, y: number, color = C.peach) => text(s.toUpperCase(), x, y, { font: "sansBold", size: 7, color, spacing: 1.3 });
+    const label = (s: string, x: number, y: number, color: string = A.label) => text(s.toUpperCase(), x, y, { font: "sansBold", size: 7, color, spacing: 1.3 });
     const hair = (x1: number, x2: number, y: number, color = C.border) => doc.moveTo(x1, y).lineTo(x2, y).lineWidth(0.7).strokeColor(color).stroke();
 
     /** A running stitch along a gentle wave — the storefront's yarn motif. */
@@ -277,13 +299,13 @@ export async function renderInvoicePdf(
         idLine,
       ].filter(Boolean) as string[];
       const bandH = 160;
-      doc.rect(0, 0, W, bandH).fill(C.ink);
+      doc.rect(0, 0, W, bandH).fill(HB.bg);
       // soft decorative rings, top right
-      doc.save().opacity(0.14);
-      doc.circle(W - 40, 18, 120).lineWidth(22).strokeColor(C.violet).stroke();
-      doc.circle(W - 40, 18, 70).lineWidth(1).strokeColor(C.peach).stroke();
+      doc.save().opacity(light ? 0.07 : 0.14);
+      doc.circle(W - 40, 18, 120).lineWidth(22).strokeColor(HB.ring).stroke();
+      doc.circle(W - 40, 18, 70).lineWidth(1).strokeColor(A.wave).stroke();
       doc.restore();
-      stitchWave(M, R, bandH - 14, C.peach, 0.85);
+      stitchWave(M, R, bandH - 14, A.wave, 0.85);
 
       // logo + business: the footer's white logo straight on the ink band
       const badge = 58;
@@ -294,31 +316,33 @@ export async function renderInvoicePdf(
           /* unsupported image — name alone */
         }
       } else {
-        doc.circle(M + badge / 2, 32 + badge / 2, badge / 2).fill(C.white);
+        if (!light) doc.circle(M + badge / 2, 32 + badge / 2, badge / 2).fill(C.white);
         if (logo) {
+          const pad = light ? 0 : 6;
           try {
-            doc.image(logo, M + 6, 32 + 6, { fit: [badge - 12, badge - 12], align: "center", valign: "center" });
+            doc.image(logo, M + pad, 32 + pad, { fit: [badge - pad * 2, badge - pad * 2], align: "center", valign: "center" });
           } catch {
             /* unsupported image — badge stays plain */
           }
         }
       }
       const bx = M + badge + 14;
-      text(snapshot.business.name || "Suthrayaa", bx, 36, { font: "serif", size: 22, color: C.white });
-      text("Handcrafted crochet, made to order", bx, 64, { font: "serifItalic", size: 9.5, color: C.lilacText });
+      text(b.name || "Suthrayaa", bx, 36, { font: "serif", size: 22, color: HB.title });
+      const tagline = clean(b.tagline ?? "Handcrafted crochet, made to order");
+      if (tagline) text(tagline, bx, 64, { font: "serifItalic", size: 9.5, color: HB.sub, width: 260 });
       let cy = contact.length >= 4 ? 90 : 96;
       for (const line of contact.slice(0, 4)) {
-        text(line, M, cy, { size: 8, color: "#D9D2F5", width: 310 });
+        text(line, M, cy, { size: 8, color: HB.body, width: 310 });
         cy += 11;
       }
 
       // invoice meta (right)
       const mx = R - 200;
-      text(gst ? "TAX INVOICE" : "INVOICE", mx, 36, { font: "sansBold", size: 8, color: C.peach, width: 200, align: "right", spacing: 2 });
-      if (gst) text("Original for recipient", mx, 48, { size: 7.5, color: C.lilacText, width: 200, align: "right" });
-      text(invoiceNumber, mx, 60, { font: "serif", size: 19, color: C.white, width: 200, align: "right" });
-      text(`Invoice date ${formatDate(snapshot.orderDate)}`, mx, 88, { size: 8.5, color: "#D9D2F5", width: 200, align: "right" });
-      text(`Order #${snapshot.orderNumber}`, mx, 101, { size: 8.5, color: "#D9D2F5", width: 200, align: "right" });
+      text(gst ? "TAX INVOICE" : "INVOICE", mx, 36, { font: "sansBold", size: 8, color: light ? A.label : A.wave, width: 200, align: "right", spacing: 2 });
+      if (gst) text("Original for recipient", mx, 48, { size: 7.5, color: HB.sub, width: 200, align: "right" });
+      text(invoiceNumber, mx, 60, { font: "serif", size: 19, color: HB.number, width: 200, align: "right" });
+      text(`Invoice date ${formatDate(snapshot.orderDate)}`, mx, 88, { size: 8.5, color: HB.body, width: 200, align: "right" });
+      text(`Order #${snapshot.orderNumber}`, mx, 101, { size: 8.5, color: HB.body, width: 200, align: "right" });
 
       const st = statusStyle(livePaymentStatus || "pending");
       const pill = titleCase(livePaymentStatus || "pending").toUpperCase();
@@ -332,10 +356,10 @@ export async function renderInvoicePdf(
 
     /** Slim header for continuation pages. */
     const drawContinuationHeader = () => {
-      doc.rect(0, 0, W, 54).fill(C.ink);
-      stitchWave(M, R, 46, C.peach, 0.6);
-      text(snapshot.business.name || "Suthrayaa", M, 17, { font: "serif", size: 13, color: C.white });
-      text(`${invoiceNumber}  ·  Order #${snapshot.orderNumber}  ·  continued`, R - 300, 20, { size: 8, color: "#D9D2F5", width: 300, align: "right" });
+      doc.rect(0, 0, W, 54).fill(HB.bg);
+      stitchWave(M, R, 46, A.wave, 0.6);
+      text(b.name || "Suthrayaa", M, 17, { font: "serif", size: 13, color: HB.title });
+      text(`${invoiceNumber}  ·  Order #${snapshot.orderNumber}  ·  continued`, R - 300, 20, { size: 8, color: HB.body, width: 300, align: "right" });
       return 78;
     };
 
@@ -370,13 +394,13 @@ export async function renderInvoicePdf(
             lines: [
               `${gst.isInterState ? "Inter-state supply · IGST" : "Intra-state supply · CGST + SGST"}`,
               "Reverse charge: No",
-              `Payment: ${paymentMethodLabel(snapshot.paymentMethod)} · ${titleCase(livePaymentStatus || "pending")}`,
+              show.payment ? `Payment: ${paymentMethodLabel(snapshot.paymentMethod)} · ${titleCase(livePaymentStatus || "pending")}` : null,
             ],
           }
         : {
             title: "Order",
             head: `#${snapshot.orderNumber}`,
-            lines: [`Placed ${formatDate(snapshot.orderDate)}`, `Status: ${titleCase(liveStatus || "confirmed")}`, `Payment: ${paymentMethodLabel(snapshot.paymentMethod)}`],
+            lines: [`Placed ${formatDate(snapshot.orderDate)}`, `Status: ${titleCase(liveStatus || "confirmed")}`, show.payment ? `Payment: ${paymentMethodLabel(snapshot.paymentMethod)}` : null],
           },
     ];
     const gap = 18;
@@ -409,7 +433,7 @@ export async function renderInvoicePdf(
     /* ---------- items table ---------- */
     const showSku = snapshot.business.showSku;
     const NUM_R = R - 12; // right edge shared by every amount on the page
-    const showHsn = !!gst && gst.lines.some((l) => l.hsn);
+    const showHsn = show.hsn && !!gst && gst.lines.some((l) => l.hsn);
     // Columns laid out from the right edge so every numeric column is right-aligned on a grid
     const cw = { amount: 76, gst: 34, unit: 64, qty: 28, hsn: 44 };
     const col = { idx: M + 12, item: M + 38, amount: NUM_R - cw.amount, gst: 0, unit: 0, qty: 0, hsn: 0 };
@@ -420,7 +444,7 @@ export async function renderInvoicePdf(
     const itemW = (showHsn ? col.hsn : col.qty) - col.item - 12;
 
     const drawTableHead = () => {
-      doc.roundedRect(M, y, CW, 26, 8).fill(C.violetSoft);
+      doc.roundedRect(M, y, CW, 26, 8).fill(A.soft);
       const hy = y + 9.5;
       const th = (s: string, x: number, w?: number, align: "left" | "right" | "center" = "left") =>
         text(s, x, hy, { font: "sansBold", size: 7, color: C.ink, spacing: 1, width: w, align });
@@ -507,9 +531,10 @@ export async function renderInvoicePdf(
     const tx = R - 222; // right column: totals labels; the total panel starts 12pt left of this
     const LW = tx - 12 - 24 - M; // left column width
     const words = currency === "INR" ? amountInWords(snapshot.total) : `${fmt(snapshot.total)} only`;
-    const summaryH = gst ? 14 + 20 + (gst.summary.length + 1) * 18 + 28 + 13 + height(words, LW, "serifItalic", 10, 2) : 0;
+    const withSummary = !!gst && show.gstSummary && gst.summary.length > 0;
+    const summaryH = withSummary && gst ? 14 + 20 + (gst.summary.length + 1) * 18 + 28 + (show.words ? 13 + height(words, LW, "serifItalic", 10, 2) : 0) : 0;
     const rightH = rows.length * 18 + 4 + 46 + (taxInclusive && taxLines.length ? 18 : 0);
-    const blockH = Math.max(rightH, summaryH, gst ? 0 : 110);
+    const blockH = Math.max(rightH, summaryH, withSummary ? 0 : 110);
     if (y + 20 + blockH > BOTTOM) newPage();
     y += 20;
 
@@ -531,11 +556,11 @@ export async function renderInvoicePdf(
       y += 12;
     }
 
-    if (gst) {
+    if (gst && withSummary) {
       // left column: HSN-wise GST summary
       const inter = gst.isInterState;
       let sy = top;
-      label("GST summary", M, sy, C.violet);
+      label("GST summary", M, sy, A.strong);
       sy += 14;
       const end = M + LW - 8;
       const sc = inter
@@ -568,10 +593,10 @@ export async function renderInvoicePdf(
       }
       cell("Total", M + 8, hsnW, { align: "left", bold: true });
       cell(fmt2(gst.taxableValue), sc.taxable, sc.wTaxable, { bold: true });
-      if (inter) cell(fmt2(gst.igst), sc.igst, sc.wTax, { bold: true, color: C.violet });
+      if (inter) cell(fmt2(gst.igst), sc.igst, sc.wTax, { bold: true, color: A.strong });
       else {
-        cell(fmt2(gst.cgst), sc.cgst, sc.wTax, { bold: true, color: C.violet });
-        cell(fmt2(gst.sgst), sc.sgst, sc.wTax, { bold: true, color: C.violet });
+        cell(fmt2(gst.cgst), sc.cgst, sc.wTax, { bold: true, color: A.strong });
+        cell(fmt2(gst.sgst), sc.sgst, sc.wTax, { bold: true, color: A.strong });
       }
       sy += 20;
       const note = [
@@ -583,22 +608,31 @@ export async function renderInvoicePdf(
         .join("  ·  ");
       text(note.charAt(0).toUpperCase() + note.slice(1), M, sy, { size: 7, color: C.faint, width: LW, lineGap: 1.5 });
       sy += height(note, LW, "sans", 7) + 12;
-      // amount in words under the summary
-      label("Amount in words", M, sy);
-      text(words, M, sy + 13, { font: "serifItalic", size: 10, color: C.text, width: LW, lineGap: 2 });
-      sy += 13 + height(words, LW, "serifItalic", 10, 2);
+      if (show.words) {
+        // amount in words under the summary
+        label("Amount in words", M, sy);
+        text(words, M, sy + 13, { font: "serifItalic", size: 10, color: C.text, width: LW, lineGap: 2 });
+        sy += 13 + height(words, LW, "serifItalic", 10, 2);
+      }
       y = Math.max(y, sy) + 8;
     } else {
-      // left of totals: amount in words + payment
+      // left of totals: amount in words + payment (the payment card is omitted on tax
+      // invoices, which already state it under Place of supply)
       const lw = tx - 12 - M - 28;
-      label("Amount in words", M, top);
-      text(words, M, top + 13, { font: "serifItalic", size: 10.5, color: C.text, width: lw, lineGap: 2 });
-      const wordsBottom = top + 13 + height(words, lw, "serifItalic", 10.5, 2);
-      const py = Math.max(panelY, wordsBottom + 14);
-      doc.roundedRect(M, py, lw, 46, 12).fill(C.lilacBg);
-      label("Payment", M + 14, py + 11, C.violet);
-      text(`${paymentMethodLabel(snapshot.paymentMethod)}  ·  ${titleCase(livePaymentStatus || "pending")}`, M + 14, py + 24, { font: "sansSemi", size: 9.5, width: lw - 28 });
-      y = Math.max(y, py + 46) + 14;
+      let ly = top;
+      if (show.words) {
+        label("Amount in words", M, ly);
+        text(words, M, ly + 13, { font: "serifItalic", size: 10.5, color: C.text, width: lw, lineGap: 2 });
+        ly += 13 + height(words, lw, "serifItalic", 10.5, 2) + 14;
+      }
+      if (show.payment && !gst) {
+        const py = show.words ? Math.max(panelY, ly) : top;
+        doc.roundedRect(M, py, lw, 46, 12).fill(C.lilacBg);
+        label("Payment", M + 14, py + 11, A.strong);
+        text(`${paymentMethodLabel(snapshot.paymentMethod)}  ·  ${titleCase(livePaymentStatus || "pending")}`, M + 14, py + 24, { font: "sansSemi", size: 9.5, width: lw - 28 });
+        ly = py + 46 + 14;
+      }
+      y = Math.max(y + 14, ly);
       if (!snapshot.business.gstin && tax.total <= 0 && snapshot.business.showTax) {
         text("GST not charged — the supplier is not registered under GST.", M, y, { size: 7.8, color: C.faint, width: CW });
         y += 16;
@@ -609,7 +643,7 @@ export async function renderInvoicePdf(
 
     /* ---------- declaration, terms + authorised signatory (tax invoices) ---------- */
     if (gst) {
-      const dw = CW - 196;
+      const dw = show.signature ? CW - 196 : CW;
       const decl = "Certified that the particulars given above are true and correct. Tax is not payable on reverse charge basis.";
       const declH = height(decl, dw, "sans", 7.6, 1.8);
       const termsH = terms ? 22 + height(terms, dw, "sans", 7.6, 1.8) : 0;
@@ -617,24 +651,27 @@ export async function renderInvoicePdf(
       if (y + 10 + bandH > BOTTOM) newPage();
       hair(M, R, y);
       y += 10;
-      label("Declaration", M, y, C.violet);
+      label("Declaration", M, y, A.strong);
       text(decl, M, y + 13, { size: 7.6, color: C.muted, width: dw, lineGap: 1.8 });
       if (terms) {
         const ty = y + 13 + declH + 9;
-        label("Terms", M, ty, C.violet);
+        label("Terms", M, ty, A.strong);
         text(terms, M, ty + 13, { size: 7.6, color: C.muted, width: dw, lineGap: 1.8 });
       }
-      const sx = R - 170;
-      text(`For ${gst.legalName || snapshot.business.name || "Suthrayaa"}`, sx, y, { font: "sansSemi", size: 8.8, color: C.text, width: 170, align: "right" });
-      doc.moveTo(sx + 30, y + 42).lineTo(R, y + 42).lineWidth(0.7).strokeColor(C.faint).stroke();
-      text("Authorised Signatory", sx, y + 47, { size: 7.8, color: C.muted, width: 170, align: "right" });
+      if (show.signature) {
+        const sx = R - 170;
+        text(`For ${gst.legalName || b.name || "Suthrayaa"}`, sx, y, { font: "sansSemi", size: 8.8, color: C.text, width: 170, align: "right" });
+        doc.moveTo(sx + 30, y + 42).lineTo(R, y + 42).lineWidth(0.7).strokeColor(C.faint).stroke();
+        const who = clean(b.signatoryName);
+        text(who ? `${who} · Authorised Signatory` : "Authorised Signatory", sx, y + 47, { size: 7.8, color: C.muted, width: 170, align: "right" });
+      }
       y += bandH;
     } else if (terms) {
       /* ---------- terms ---------- */
       const th = height(terms, CW, "sans", 7.8, 2) + 24;
       if (y + th > BOTTOM) newPage();
       hair(M, R, y);
-      label("Terms", M, y + 10, C.violet);
+      label("Terms", M, y + 10, A.strong);
       text(terms, M, y + 22, { size: 7.8, color: C.muted, width: CW, lineGap: 2 });
     }
 
@@ -644,7 +681,7 @@ export async function renderInvoicePdf(
       doc.switchToPage(p);
       const fy = H - FOOTER_H;
       doc.rect(0, fy, W, FOOTER_H).fill(C.lilacBg);
-      stitchWave(M, R, fy, C.violet, 0.35);
+      stitchWave(M, R, fy, A.strong, 0.35);
       const thanks = clean(snapshot.business.footer) ?? `Thank you for supporting handmade · ${snapshot.business.name || "Suthrayaa"}`;
       text(thanks, M, fy + 20, { font: "serifItalic", size: 9.5, color: C.ink, width: CW - 200 });
       text(
