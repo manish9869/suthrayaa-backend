@@ -1,8 +1,15 @@
 import express from "express";
 import cors from "cors";
-import helmet from "helmet";
+import helmetImport from "helmet";
 import compression from "compression";
 import { pinoHttp } from "pino-http";
+
+// helmet ships CJS types with `export default`; depending on how the compiler resolves
+// them (local tsc vs Vercel's builder) the default import is either the function or the
+// module object. Unwrap `.default` so both resolve to the callable middleware factory.
+type HelmetFn = typeof import("helmet").default;
+const helmet: HelmetFn =
+  (helmetImport as unknown as { default?: HelmetFn }).default ?? (helmetImport as unknown as HelmetFn);
 
 import { env } from "./config/env.js";
 import { supabaseAdmin } from "./config/supabase.js";
