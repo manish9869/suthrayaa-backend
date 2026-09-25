@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import crypto from "node:crypto";
+import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
@@ -29,7 +30,7 @@ async function loadValidInvite(token: string) {
   return data;
 }
 
-adminInvitesRouter.get("/:token", async (req, res, next) => {
+adminInvitesRouter.get("/:token", sensitiveLimiter, async (req, res, next) => {
   try {
     const invite = await loadValidInvite(req.params.token);
     if (!invite) throw HttpError.notFound("This invite is no longer valid.");
@@ -43,7 +44,7 @@ adminInvitesRouter.get("/:token", async (req, res, next) => {
 
 const acceptSchema = z.object({ password: z.string().min(8) });
 
-adminInvitesRouter.post("/:token/accept", validate(acceptSchema), async (req, res, next) => {
+adminInvitesRouter.post("/:token/accept", sensitiveLimiter, validate(acceptSchema), async (req, res, next) => {
   try {
     const invite = await loadValidInvite(req.params.token);
     if (!invite) throw HttpError.notFound("This invite is no longer valid.");

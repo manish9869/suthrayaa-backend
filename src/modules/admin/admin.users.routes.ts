@@ -9,7 +9,7 @@ import { supabaseAdmin } from "../../config/supabase.js";
 import { env } from "../../config/env.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logAudit } from "../rbac/audit.service.js";
-import { getUserRbac, countActiveSuperAdmins, SUPER_ADMIN_SLUG } from "../rbac/rbac.service.js";
+import { getUserRbac, countActiveSuperAdmins, SUPER_ADMIN_SLUG, permissionsBeyond } from "../rbac/rbac.service.js";
 import { resendLoggedEmail, wrapEmail } from "../email/email.service.js";
 import { logger } from "../../lib/logger.js";
 
@@ -167,6 +167,11 @@ adminUsersRouter.delete("/:id", requirePermission("users.delete"), async (req, r
 
 const roleIdSchema = z.object({ roleId: z.string().uuid() });
 
+async function rolePermissionSlugs(roleId: string): Promise<string[]> {
+  const { data } = await supabaseAdmin.from("role_permissions").select("permissions(slug)").eq("role_id", roleId);
+  return (data ?? []).map((r: any) => r.permissions?.slug).filter(Boolean);
+}
+
 adminUsersRouter.post("/:id/roles", requirePermission("users.assign_role"), validate(roleIdSchema), async (req, res, next) => {
   try {
     const { roleId } = req.body as z.infer<typeof roleIdSchema>;
@@ -175,6 +180,11 @@ adminUsersRouter.post("/:id/roles", requirePermission("users.assign_role"), vali
 
     if (role.slug === SUPER_ADMIN_SLUG && !req.rbac!.isSuperAdmin) {
       throw HttpError.forbidden("Only a Super Admin can grant the Super Admin role.");
+    }
+    if (!req.rbac!.isSuperAdmin) {
+      if (req.params.id === req.admin!.id) throw HttpError.forbidden("You can't change your own roles.");
+      const beyond = permissionsBeyond(req.rbac!, await rolePermissionSlugs(role.id));
+      if (beyond.length) throw HttpError.forbidden("You can't assign a role with permissions you don't have.");
     }
 
     const { error } = await supabaseAdmin.from("user_roles").upsert({ user_id: req.params.id, role_id: roleId }, { onConflict: "user_id,role_id" });
@@ -282,6 +292,12 @@ adminUsersRouter.post(
       if (!roles || roles.length !== roleIds.length) throw HttpError.badRequest("One or more roles do not exist");
       if (roles.some((r) => r.slug === SUPER_ADMIN_SLUG) && !req.rbac!.isSuperAdmin) {
         throw HttpError.forbidden("Only a Super Admin can invite someone as a Super Admin.");
+      }
+      if (!req.rbac!.isSuperAdmin) {
+        const granted = (await Promise.all(roles.map((r) => rolePermissionSlugs(r.id)))).flat();
+        if (permissionsBeyond(req.rbac!, granted).length) {
+          throw HttpError.forbidden("You can't invite someone with permissions you don't have.");
+        }
       }
 
       const token = crypto.randomBytes(32).toString("hex");

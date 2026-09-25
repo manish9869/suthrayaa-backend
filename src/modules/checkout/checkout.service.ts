@@ -50,6 +50,9 @@ export interface CustomizationSnapshot {
 
 interface ValidatedLine {
   productId: string;
+  /** True when stock limits this product (tracked, no backorders) — only then is it reserved. */
+  stockLimited: boolean;
+  stock: number;
   name: string;
   sku?: string | null;
   image?: string;
@@ -164,6 +167,8 @@ export async function validateAndPriceCart(
       throw HttpError.badRequest("One of the items in your cart is no longer available");
     }
     if (item.quantity < 1) throw HttpError.badRequest("Invalid quantity");
+    // Marked sold out by the team — not buyable even if inventory isn't tracked
+    if (product.status === "out_of_stock") throw HttpError.badRequest(`"${product.name}" is sold out right now`);
     const stockIsTracked = product.track_inventory !== false;
     const stockExempt = product.allow_backorders || product.continue_selling_when_out_of_stock;
     if (stockIsTracked && !stockExempt && product.stock < item.quantity) {
@@ -220,6 +225,8 @@ export async function validateAndPriceCart(
 
     lines.push({
       productId: product.id,
+      stockLimited: stockIsTracked && !stockExempt,
+      stock: Number(product.stock ?? 0),
       name: product.name,
       sku: product.sku,
       image: primaryImage,
@@ -233,6 +240,16 @@ export async function validateAndPriceCart(
       lineTotal: Math.round(unitPrice * item.quantity * 100) / 100,
       taxCategoryId: product.tax_category_id,
     });
+  }
+
+  // Several lines of the same product (different colours / options) share one stock count
+  const qtyByProduct = new Map<string, number>();
+  for (const l of lines) qtyByProduct.set(l.productId, (qtyByProduct.get(l.productId) ?? 0) + l.quantity);
+  for (const l of lines) {
+    const total = qtyByProduct.get(l.productId)!;
+    if (l.stockLimited && total > l.stock) {
+      throw HttpError.badRequest(`"${l.name}" only has ${l.stock} left in stock`);
+    }
   }
 
   const subtotal = Math.round(lines.reduce((sum, l) => sum + l.lineTotal, 0) * 100) / 100;
@@ -405,7 +422,7 @@ export async function checkCartLines(items: CartItemInput[]): Promise<CartLineIs
       await validateAndPriceCart([item]);
     } catch (err) {
       const message = err instanceof Error ? err.message : "This item can't be ordered right now";
-      const kind: CartLineIssue["kind"] = /no longer available/i.test(message)
+      const kind: CartLineIssue["kind"] = /no longer available|sold out/i.test(message)
         ? "unavailable"
         : /left in stock|quantity/i.test(message)
           ? "quantity"
@@ -454,9 +471,34 @@ export interface PlaceOrderInput {
   giftWrap?: boolean;
   giftMessage?: string;
   customerId?: string;
+  /** One per checkout attempt — a repeated request returns the same order. */
+  idempotencyKey?: string;
+}
+
+/** Returns the order already created for this idempotency key (with a fresh payment if unpaid). */
+async function existingOrderForKey(key: string, customerId?: string) {
+  const { data: order } = await supabaseAdmin.from("orders").select("*").eq("idempotency_key", key).maybeSingle();
+  if (!order) return null;
+  if ((order.customer_id ?? undefined) !== customerId) throw HttpError.conflict("This checkout was already used — please refresh the page");
+  if (order.payment_method !== "razorpay" || order.payment_status === "paid" || order.status !== "pending_payment") {
+    return { order, razorpayOrder: null };
+  }
+  const razorpayOrder = await razorpay.orders.create({
+    amount: Math.round(Number(order.total) * 100),
+    currency: "INR",
+    receipt: order.order_number,
+    notes: { orderId: order.id },
+  });
+  await supabaseAdmin.from("orders").update({ razorpay_order_id: razorpayOrder.id }).eq("id", order.id);
+  return { order, razorpayOrder };
 }
 
 export async function placeOrder(input: PlaceOrderInput) {
+  if (input.idempotencyKey) {
+    const existing = await existingOrderForKey(input.idempotencyKey, input.customerId);
+    if (existing) return existing;
+  }
+
   const [razorpayEnabled, codEnabled, codMin, codMax, orderMin, orderMax] = await Promise.all([
     getSetting<boolean>("payment.razorpay_enabled"),
     getSetting<boolean>("payment.cod_enabled"),
@@ -509,6 +551,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       igst_amount: priced.igstAmount,
       shipping_address: input.shippingAddress,
       billing_address: input.billingAddress ?? null,
+      idempotency_key: input.idempotencyKey ?? null,
       shipping_method: input.shippingMethod,
       payment_method: input.paymentMethod,
       payment_status: "pending",
@@ -520,6 +563,11 @@ export async function placeOrder(input: PlaceOrderInput) {
     .select("*")
     .single();
 
+  if (orderError?.code === "23505" && input.idempotencyKey) {
+    // A concurrent duplicate of this request won the insert — hand back that order
+    const existing = await existingOrderForKey(input.idempotencyKey, input.customerId);
+    if (existing) return existing;
+  }
   if (orderError || !order) throw HttpError.internal(orderError?.message ?? "Failed to create order");
 
   const { error: itemsError } = await supabaseAdmin.from("order_items").insert(
@@ -538,7 +586,20 @@ export async function placeOrder(input: PlaceOrderInput) {
       line_total: l.lineTotal,
     }))
   );
-  if (itemsError) throw HttpError.internal(itemsError.message);
+  if (itemsError) {
+    await supabaseAdmin.from("orders").delete().eq("id", order.id);
+    throw HttpError.internal(itemsError.message);
+  }
+
+  // COD reserves stock now. The reservation is atomic per product (stock >= qty); if another
+  // customer took the last one a moment ago, undo what was reserved and cancel cleanly.
+  if (isCod) {
+    const reserved = await reserveStock(priced.lines);
+    if (!reserved.ok) {
+      await supabaseAdmin.from("orders").delete().eq("id", order.id);
+      throw HttpError.conflict(`Sorry — "${reserved.failed}" just sold out. Please update your cart.`);
+    }
+  }
 
   await supabaseAdmin.from("order_status_history").insert({
     order_id: order.id,
@@ -547,9 +608,6 @@ export async function placeOrder(input: PlaceOrderInput) {
   });
 
   if (isCod) {
-    for (const line of priced.lines) {
-      await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: line.productId, p_qty: line.quantity });
-    }
     if (priced.coupon) await redeemCoupon(priced.coupon.id, order.id, input.customerId, priced.discount);
     if (input.customerId) await clearServerCart(input.customerId);
 
@@ -614,6 +672,21 @@ export async function createPaymentForExistingOrder(orderId: string, customerId:
   });
   await supabaseAdmin.from("orders").update({ razorpay_order_id: razorpayOrder.id, payment_status: "pending" }).eq("id", order.id);
   return { order, razorpayOrder };
+}
+
+/** Atomically reserves stock for every stock-limited line; rolls back on the first failure. */
+async function reserveStock(lines: { productId: string; name: string; quantity: number; stockLimited: boolean }[]) {
+  const done: { productId: string; quantity: number }[] = [];
+  for (const line of lines) {
+    if (!line.stockLimited) continue;
+    const { data: ok } = await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: line.productId, p_qty: line.quantity });
+    if (!ok) {
+      for (const d of done) await supabaseAdmin.rpc("increment_product_stock", { p_product_id: d.productId, p_qty: d.quantity });
+      return { ok: false as const, failed: line.name };
+    }
+    done.push({ productId: line.productId, quantity: line.quantity });
+  }
+  return { ok: true as const };
 }
 
 async function redeemCoupon(couponId: string, orderId: string, customerId: string | undefined, amount: number) {
@@ -719,39 +792,63 @@ export async function verifyRazorpayPayment(input: {
   return markOrderPaidByRazorpayOrderId(input.razorpayOrderId, input.razorpayPaymentId);
 }
 
-/** Idempotent — safe to call from both the client verify-payment call and the Razorpay webhook. */
-export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, razorpayPaymentId?: string) {
-  const { data: order } = await supabaseAdmin
-    .from("orders")
-    .select(
-      "id, order_number, status, payment_status, payment_method, customer_id, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address"
-    )
-    .eq("razorpay_order_id", razorpayOrderId)
-    .maybeSingle();
-
+/**
+ * Idempotent and race-safe — the client verify-payment call and the Razorpay webhook often
+ * arrive together. The order is *claimed* with one conditional update (payment_status still
+ * not 'paid'); only the caller that wins the claim reserves stock, redeems the coupon and
+ * sends emails. `fallbackOrderId` (from the Razorpay order notes) finds the order when the
+ * customer paid an older payment attempt.
+ */
+export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, razorpayPaymentId?: string, fallbackOrderId?: string) {
+  const columns =
+    "id, order_number, status, payment_status, payment_method, customer_id, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address";
+  let { data: order } = await supabaseAdmin.from("orders").select(columns).eq("razorpay_order_id", razorpayOrderId).maybeSingle();
+  if (!order && fallbackOrderId) {
+    ({ data: order } = await supabaseAdmin.from("orders").select(columns).eq("id", fallbackOrderId).maybeSingle());
+  }
   if (!order) return null;
   if (order.payment_status === "paid") return order;
 
-  const { data: items } = await supabaseAdmin
-    .from("order_items")
-    .select("product_id, quantity, product_name_snapshot, unit_price_snapshot, line_total, selected_color_name, custom_text")
-    .eq("order_id", order.id);
-
-  for (const item of items ?? []) {
-    if (item.product_id) {
-      await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
-    }
-  }
-
-  await supabaseAdmin
+  // Paid after the customer (or an admin) cancelled: record the payment, keep it cancelled,
+  // and flag it for a refund rather than silently reviving the order.
+  const cancelled = order.status === "cancelled";
+  const { data: claimed } = await supabaseAdmin
     .from("orders")
     .update({
       payment_status: "paid",
-      status: "confirmed",
+      ...(cancelled ? {} : { status: "confirmed", placed_at: new Date().toISOString() }),
       razorpay_payment_id: razorpayPaymentId,
-      placed_at: new Date().toISOString(),
     })
-    .eq("id", order.id);
+    .eq("id", order.id)
+    .neq("payment_status", "paid")
+    .select("id");
+  if (!claimed?.length) return { ...order, payment_status: "paid" };
+
+  if (cancelled) {
+    await supabaseAdmin.from("order_status_history").insert({
+      order_id: order.id,
+      status: "cancelled",
+      note: "Payment received after cancellation — refund required",
+    });
+    logger.warn({ orderId: order.id }, "Payment captured for a cancelled order — needs a refund");
+    return { ...order, payment_status: "paid" };
+  }
+
+  const { data: items } = await supabaseAdmin
+    .from("order_items")
+    .select("product_id, quantity, product_name_snapshot, unit_price_snapshot, line_total, selected_color_name, custom_text, products(track_inventory, allow_backorders, continue_selling_when_out_of_stock)")
+    .eq("order_id", order.id);
+
+  // The customer has already paid, so stock is reserved best-effort; a shortfall is logged
+  // for the team to handle rather than failing a completed payment.
+  for (const item of items ?? []) {
+    const p: any = (item as any).products;
+    const limited = p && p.track_inventory !== false && !p.allow_backorders && !p.continue_selling_when_out_of_stock;
+    if (item.product_id && limited) {
+      const { data: ok } = await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
+      if (!ok) logger.warn({ orderId: order.id, productId: item.product_id }, "Paid order exceeds available stock");
+    }
+  }
 
   await supabaseAdmin.from("order_status_history").insert({
     order_id: order.id,

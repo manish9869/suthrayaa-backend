@@ -54,11 +54,22 @@ import {
 
 export function createApp() {
   const app = express();
+  app.set("trust proxy", env.TRUST_PROXY);
+  app.disable("x-powered-by");
 
   app.use(helmet());
   app.use(cors({ origin: env.FRONTEND_URL }));
   app.use(compression());
-  app.use(pinoHttp({ logger }));
+  // Never write bearer tokens, cookies or webhook signatures into request logs
+  app.use(
+    pinoHttp({
+      logger,
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-razorpay-signature"]', 'res.headers["set-cookie"]'],
+        censor: "[redacted]",
+      },
+    })
+  );
   app.use(generalLimiter);
 
   // Mounted before the global JSON parser: the Razorpay webhook needs the raw request

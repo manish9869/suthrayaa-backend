@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { authenticate } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
+import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { HttpError } from "../../lib/httpError.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
@@ -16,6 +17,12 @@ import { env } from "../../config/env.js";
 
 export const meRouter = Router();
 meRouter.use(authenticate);
+
+// Malformed ids are a plain "not found", never a database error
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+for (const name of ["id", "productId", "itemId"]) {
+  meRouter.param(name, (_req, _res, next, value: string) => (UUID_RE.test(value) ? next() : next(HttpError.notFound("Not found"))));
+}
 
 // ---- Profile ----
 
@@ -366,7 +373,7 @@ meRouter.get("/orders/:id/invoice", async (req, res, next) => {
 const cancelSchema = z.object({ reason: z.string().trim().max(300).optional() });
 
 /** Customers can cancel until making starts (awaiting payment or confirmed). */
-meRouter.post("/orders/:id/cancel", validate(cancelSchema), async (req, res, next) => {
+meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), async (req, res, next) => {
   try {
     const { reason } = req.body as z.infer<typeof cancelSchema>;
     const order = await loadOwnOrder(req.params.id, req.user!.id);
@@ -422,7 +429,7 @@ meRouter.post("/orders/:id/cancel", validate(cancelSchema), async (req, res, nex
 });
 
 /** Starts a new online payment for an order still awaiting payment. */
-meRouter.post("/orders/:id/pay", async (req, res, next) => {
+meRouter.post("/orders/:id/pay", sensitiveLimiter, async (req, res, next) => {
   try {
     const { order, razorpayOrder } = await createPaymentForExistingOrder(req.params.id, req.user!.id);
     res.json({
@@ -451,6 +458,8 @@ meRouter.get("/wishlist", async (req, res, next) => {
 
 meRouter.post("/wishlist/:productId", async (req, res, next) => {
   try {
+    const { data: product } = await supabaseAdmin.from("products").select("id").eq("id", req.params.productId).maybeSingle();
+    if (!product) throw HttpError.notFound("Product not found");
     const { error } = await supabaseAdmin
       .from("wishlist_items")
       .upsert(
@@ -570,7 +579,7 @@ meRouter.put("/cart", validate(cartSyncSchema), async (req, res, next) => {
       if (existing) {
         await supabaseAdmin
           .from("cart_items")
-          .update({ quantity: existing.quantity + item.quantity })
+          .update({ quantity: Math.min(20, existing.quantity + item.quantity) })
           .eq("id", existing.id);
       } else {
         await supabaseAdmin.from("cart_items").insert({

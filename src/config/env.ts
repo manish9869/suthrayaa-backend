@@ -5,6 +5,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(5000),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   FRONTEND_URL: z.string().url().default("http://localhost:3000"),
+  // Number of reverse proxies in front of the API (Render/Railway/Nginx = 1). Needed so rate
+  // limits see the real client IP; 0 = trust none (don't set higher than the real hop count,
+  // or clients can spoof X-Forwarded-For).
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
 
   SUPABASE_URL: z.string().url(),
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),

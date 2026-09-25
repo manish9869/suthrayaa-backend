@@ -291,6 +291,11 @@ export async function createInvoiceForOrder(orderId: string) {
     .select("*")
     .single();
 
+  if (error?.code === "23505") {
+    // Created concurrently by another request — use that one
+    const { data: existingNow } = await supabaseAdmin.from("invoices").select("*").eq("order_id", orderId).maybeSingle();
+    if (existingNow) return existingNow;
+  }
   if (error) throw error;
 
   return invoice;

@@ -42,7 +42,8 @@ export async function razorpayWebhookHandler(req: Request, res: Response) {
       const razorpayOrderId =
         payload.payload?.payment?.entity?.order_id ?? payload.payload?.order?.entity?.id;
       const razorpayPaymentId = payload.payload?.payment?.entity?.id;
-      if (razorpayOrderId) await markOrderPaidByRazorpayOrderId(razorpayOrderId, razorpayPaymentId);
+      const ourOrderId = payload.payload?.payment?.entity?.notes?.orderId ?? payload.payload?.order?.entity?.notes?.orderId;
+      if (razorpayOrderId) await markOrderPaidByRazorpayOrderId(razorpayOrderId, razorpayPaymentId, typeof ourOrderId === "string" ? ourOrderId : undefined);
     } else if (event === "payment.failed") {
       const razorpayOrderId = payload.payload?.payment?.entity?.order_id;
       if (razorpayOrderId) await markOrderFailedByRazorpayOrderId(razorpayOrderId);
