@@ -418,7 +418,7 @@ export async function checkCartLines(items: CartItemInput[]): Promise<CartLineIs
 
 /** Payment / order rules the checkout shows up front (all admin-configured settings). */
 export async function getCheckoutOptions() {
-  const [razorpayEnabled, codEnabled, codMin, codMax, orderMin, orderMax, giftWrapFee] = await Promise.all([
+  const [razorpayEnabled, codEnabled, codMin, codMax, orderMin, orderMax, giftWrapFee, freeEnabled, freeThreshold] = await Promise.all([
     getSetting<boolean>("payment.razorpay_enabled"),
     getSetting<boolean>("payment.cod_enabled"),
     getSetting<number>("payment.cod_min_amount"),
@@ -426,6 +426,8 @@ export async function getCheckoutOptions() {
     getSetting<number>("order.min_amount"),
     getSetting<number>("order.max_amount"),
     getSetting<number>("shipping.gift_wrap_fee"),
+    getSetting<boolean>("shipping.free_shipping_enabled"),
+    getSetting<number>("shipping.free_shipping_threshold"),
   ]);
   return {
     payment: {
@@ -436,6 +438,8 @@ export async function getCheckoutOptions() {
     },
     order: { min: Number(orderMin ?? 0), max: Number(orderMax ?? 0) },
     giftWrap: { fee: Number(giftWrapFee ?? 0) },
+    // Store-wide default; a shipping zone can override the threshold for its states
+    freeShipping: { enabled: Boolean(freeEnabled), threshold: Number(freeThreshold ?? 0) },
   };
 }
 
