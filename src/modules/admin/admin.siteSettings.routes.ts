@@ -111,6 +111,12 @@ adminSiteSettingsRouter.get("/tax-categories", requirePermission("settings.view"
 const taxCategorySchema = z.object({
   name: z.string().min(1),
   rate: z.number().min(0).max(100),
+  /** HSN code printed on GST invoices (4, 6 or 8 digits); empty clears it. */
+  hsnCode: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || /^(\d{4}|\d{6}|\d{8})$/.test(v), "HSN code must be 4, 6 or 8 digits")
+    .optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
@@ -121,7 +127,13 @@ adminSiteSettingsRouter.post("/tax-categories", requirePermission("settings.tax"
     if (b.isDefault) await supabaseAdmin.from("tax_categories").update({ is_default: false }).eq("is_default", true);
     const { data, error } = await supabaseAdmin
       .from("tax_categories")
-      .insert({ name: b.name, rate: b.rate, is_default: b.isDefault ?? false, is_active: b.isActive ?? true })
+      .insert({
+        name: b.name,
+        rate: b.rate,
+        is_default: b.isDefault ?? false,
+        is_active: b.isActive ?? true,
+        ...(b.hsnCode ? { hsn_code: b.hsnCode } : {}),
+      })
       .select("*")
       .single();
     if (error) throw HttpError.internal(error.message);
@@ -138,6 +150,7 @@ adminSiteSettingsRouter.patch("/tax-categories/:id", requirePermission("settings
     const update: Record<string, unknown> = {};
     if (b.name !== undefined) update.name = b.name;
     if (b.rate !== undefined) update.rate = b.rate;
+    if (b.hsnCode !== undefined) update.hsn_code = b.hsnCode || null;
     if (b.isDefault !== undefined) update.is_default = b.isDefault;
     if (b.isActive !== undefined) update.is_active = b.isActive;
     const { data, error } = await supabaseAdmin.from("tax_categories").update(update).eq("id", req.params.id).select("*").maybeSingle();

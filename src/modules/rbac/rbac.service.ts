@@ -80,3 +80,13 @@ export async function getSuperAdminRoleId(): Promise<string | null> {
   const { data } = await supabaseAdmin.from("roles").select("id").eq("slug", SUPER_ADMIN_SLUG).maybeSingle();
   return data?.id ?? null;
 }
+
+/**
+ * Privilege-escalation guard: permissions an admin may hand out. A Super Admin may grant
+ * anything; everyone else only permissions they hold themselves — otherwise a role editor
+ * could add e.g. users.delete to their own role, or assign themselves a stronger role.
+ */
+export function permissionsBeyond(rbac: UserRbac, requested: Iterable<string>): string[] {
+  if (rbac.isSuperAdmin) return [];
+  return [...requested].filter((p) => !rbac.permissions.has(p));
+}

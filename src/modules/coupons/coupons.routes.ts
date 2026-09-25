@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { optionalAuthenticate } from "../../middleware/auth.js";
+import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { validate } from "../../middleware/validate.js";
 import { validateCoupon } from "../checkout/checkout.service.js";
 
@@ -9,7 +10,7 @@ export const couponsRouter = Router();
 
 const checkSchema = z.object({ code: z.string().min(1), subtotal: z.number().min(0) });
 
-couponsRouter.post("/validate", optionalAuthenticate, validate(checkSchema), async (req, res, next) => {
+couponsRouter.post("/validate", sensitiveLimiter, optionalAuthenticate, validate(checkSchema), async (req, res, next) => {
   try {
     const { code, subtotal } = req.body as z.infer<typeof checkSchema>;
     const coupon = await validateCoupon(code, subtotal, req.user?.id);

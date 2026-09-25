@@ -6,7 +6,7 @@ import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
-import { substituteTemplate, resendLoggedEmail, renderFinalEmailHtml } from "../email/email.service.js";
+import { substituteTemplate, resendLoggedEmail, renderFinalEmailHtml, renderOrderDetailsHtml, renderAddressHtml } from "../email/email.service.js";
 
 export const adminEmailTemplatesRouter = Router();
 export const adminEmailLogsRouter = Router();
@@ -22,7 +22,6 @@ const SAMPLE_VARIABLES: Record<string, string> = {
   product_name: "Crochet Sunflower Pot",
   invoice_number: "INV-2026-0042",
   store_name: "Suthrayaa",
-  enquiry_message: "Hi! Do you ship the crochet sunflower pot outside India?",
   item_count: "2",
   subtotal: "₹1,598",
   has_discount: "true",
@@ -50,9 +49,34 @@ const SAMPLE_VARIABLES: Record<string, string> = {
   facebook_url: "https://facebook.com/suthrayaa",
   current_year: String(new Date().getFullYear()),
 };
+const SAMPLE_ADDRESS = {
+  firstName: "Priya",
+  lastName: "Sharma",
+  addressLine1: "12 Lotus Apartments, MG Road",
+  addressLine2: "Near City Mall",
+  city: "Pune",
+  state: "Maharashtra",
+  pincode: "411001",
+  phone: "+91 98765 43210",
+};
 const SAMPLE_RAW: Record<string, string> = {
-  items_table: "<p style=\"color:#999;font-style:italic;\">[Order items table renders here]</p>",
-  address_block: "<p style=\"color:#999;font-style:italic;\">[Shipping address renders here]</p>",
+  items_table: renderOrderDetailsHtml({
+    orderNumber: "ORD-2026-0042",
+    customerName: "Priya Sharma",
+    paymentMethod: "razorpay",
+    subtotal: 1598,
+    discountAmount: 99,
+    shippingCost: 0,
+    giftWrapCost: 0,
+    total: 1499,
+    shippingAddress: SAMPLE_ADDRESS,
+    items: [
+      { name: "Crochet Sunflower Pot", quantity: 1, unitPrice: 899, lineTotal: 899, selectedColorName: "Yellow" },
+      { name: "Mini Amigurumi Bear", quantity: 1, unitPrice: 699, lineTotal: 699, customText: "Aarav" },
+    ],
+  }),
+  address_block: renderAddressHtml(SAMPLE_ADDRESS),
+  enquiry_message: "<strong>Custom order</strong><br/><br/>Hi! Could you make the sunflower pot in lavender? It's for my sister's birthday next month.",
 };
 const SAMPLE_LISTS: Record<string, Array<Record<string, string>>> = {
   order_items: [

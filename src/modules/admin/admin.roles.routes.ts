@@ -7,6 +7,7 @@ import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logAudit } from "../rbac/audit.service.js";
+import { permissionsBeyond } from "../rbac/rbac.service.js";
 import { PERMISSIONS, isValidPermissionSlug } from "../rbac/permissions.catalog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -89,6 +90,9 @@ adminRolesRouter.post("/", requirePermission("roles.create"), validate(createRol
     const body = req.body as z.infer<typeof createRoleSchema>;
     const invalid = body.permissions.filter((p) => !isValidPermissionSlug(p));
     if (invalid.length) throw HttpError.badRequest(`Unknown permission(s): ${invalid.join(", ")}`);
+    if (permissionsBeyond(req.rbac!, body.permissions).length) {
+      throw HttpError.forbidden("You can't create a role with permissions you don't have.");
+    }
 
     const slug = body.name
       .toLowerCase()
@@ -179,6 +183,11 @@ adminRolesRouter.patch(
       const { permissions } = req.body as z.infer<typeof permissionsSchema>;
       const invalid = permissions.filter((p) => !isValidPermissionSlug(p));
       if (invalid.length) throw HttpError.badRequest(`Unknown permission(s): ${invalid.join(", ")}`);
+      const beyond = permissionsBeyond(req.rbac!, permissions);
+      if (beyond.length) throw HttpError.forbidden(`You can't grant permissions you don't have: ${beyond.join(", ")}`);
+      if (!req.rbac!.isSuperAdmin && req.rbac!.roles.some((r) => r.id === role.id)) {
+        throw HttpError.forbidden("You can't change the permissions of a role you hold.");
+      }
 
       const { data: permRows } = await supabaseAdmin.from("permissions").select("id, slug").in("slug", permissions);
 

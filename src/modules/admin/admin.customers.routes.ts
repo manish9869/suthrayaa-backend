@@ -147,7 +147,7 @@ adminCustomersRouter.get("/:id/emails", requirePermission("customers.view"), asy
 
     let query = supabaseAdmin.from("email_logs").select("*").order("sent_at", { ascending: false });
     if (orderIds.length > 0 && profile.email) {
-      query = query.or(`order_id.in.(${orderIds.join(",")}),recipient.eq.${profile.email}`);
+      query = query.or(`order_id.in.(${orderIds.join(",")}),recipient.eq."${String(profile.email).replace(/"/g, "")}"`);
     } else if (orderIds.length > 0) {
       query = query.in("order_id", orderIds);
     } else if (profile.email) {

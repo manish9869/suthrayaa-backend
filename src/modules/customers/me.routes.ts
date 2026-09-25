@@ -3,57 +3,86 @@ import { z } from "zod";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { authenticate } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
+import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { HttpError } from "../../lib/httpError.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
+import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
+import { createPaymentForExistingOrder } from "../checkout/checkout.service.js";
+import { buildOrderEmailData } from "../admin/admin.orders.routes.js";
+import { sendTemplatedEmail, storeLinkVariables } from "../email/email.service.js";
+import { env } from "../../config/env.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export const meRouter = Router();
 meRouter.use(authenticate);
 
+// Malformed ids are a plain "not found", never a database error
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+for (const name of ["id", "productId", "itemId"]) {
+  meRouter.param(name, (_req, _res, next, value: string) => (UUID_RE.test(value) ? next() : next(HttpError.notFound("Not found"))));
+}
+
 // ---- Profile ----
+
+function toProfileDTO(row: any, fallbackEmail?: string) {
+  return {
+    id: row.id,
+    email: row.email ?? fallbackEmail ?? null,
+    phone: row.phone ?? null,
+    firstName: row.first_name ?? "",
+    lastName: row.last_name ?? "",
+    marketingOptIn: Boolean(row.marketing_opt_in),
+    createdAt: row.created_at,
+  };
+}
 
 meRouter.get("/", async (req, res, next) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("customer_profiles")
-      .select("*")
-      .eq("id", req.user!.id)
-      .maybeSingle();
+    let { data, error } = await supabaseAdmin.from("customer_profiles").select("*").eq("id", req.user!.id).maybeSingle();
     if (error) throw HttpError.internal(error.message);
-    res.json(
-      data && {
-        id: data.id,
-        email: data.email,
-        phone: data.phone,
-        firstName: data.first_name,
-        lastName: data.last_name,
-        marketingOptIn: data.marketing_opt_in,
-      }
-    );
+    // Accounts created before the profile trigger existed have no row yet — create it lazily
+    if (!data) {
+      const created = await supabaseAdmin
+        .from("customer_profiles")
+        .upsert({ id: req.user!.id, email: req.user!.email ?? null, phone: req.user!.phone ?? null }, { onConflict: "id" })
+        .select("*")
+        .single();
+      data = created.data;
+    }
+    res.json(data ? toProfileDTO(data, req.user!.email) : null);
   } catch (err) {
     next(err);
   }
 });
 
 const updateProfileSchema = z.object({
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
+  firstName: z.string().trim().min(1, "First name is required").max(60).optional(),
+  lastName: z.string().trim().min(1, "Last name is required").max(60).optional(),
+  phone: z
+    .string()
+    .refine((v) => v === "" || isValidIndianMobile(v), "Enter a valid 10-digit Indian mobile number")
+    .transform((v) => (v ? normalizeIndianMobile(v) : ""))
+    .optional(),
   marketingOptIn: z.boolean().optional(),
 });
 
 meRouter.patch("/", validate(updateProfileSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof updateProfileSchema>;
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.firstName !== undefined) update.first_name = body.firstName;
+    if (body.lastName !== undefined) update.last_name = body.lastName;
+    if (body.phone !== undefined) update.phone = body.phone || null;
+    if (body.marketingOptIn !== undefined) update.marketing_opt_in = body.marketingOptIn;
     const { data, error } = await supabaseAdmin
       .from("customer_profiles")
-      .update({ first_name: body.firstName, last_name: body.lastName, marketing_opt_in: body.marketingOptIn })
-      .eq("id", req.user!.id)
+      .upsert({ id: req.user!.id, email: req.user!.email ?? null, ...update }, { onConflict: "id" })
       .select("*")
       .single();
     if (error) throw HttpError.internal(error.message);
-    res.json(data);
+    res.json(toProfileDTO(data, req.user!.email));
   } catch (err) {
     next(err);
   }
@@ -61,64 +90,121 @@ meRouter.patch("/", validate(updateProfileSchema), async (req, res, next) => {
 
 // ---- Addresses ----
 
+function toAddressDTO(a: any) {
+  return {
+    id: a.id,
+    label: a.label ?? null,
+    firstName: a.first_name,
+    lastName: a.last_name,
+    phone: a.phone,
+    addressLine1: a.address_line1,
+    addressLine2: a.address_line2 ?? null,
+    landmark: a.landmark ?? null,
+    city: a.city,
+    district: a.district ?? null,
+    state: a.state,
+    pincode: a.pincode,
+    addressType: a.address_type ?? null,
+    isDefault: Boolean(a.is_default),
+    isDefaultBilling: Boolean(a.is_default_billing),
+    createdAt: a.created_at,
+  };
+}
+
+async function listAddresses(customerId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("addresses")
+    .select("*")
+    .eq("customer_id", customerId)
+    .order("is_default", { ascending: false })
+    .order("created_at", { ascending: true });
+  if (error) throw HttpError.internal(error.message);
+  return data ?? [];
+}
+
+/** Keeps exactly one default shipping (and billing) address whenever any address exists. */
+async function ensureDefaults(customerId: string) {
+  const rows = await listAddresses(customerId);
+  if (!rows.length) return;
+  if (!rows.some((r: any) => r.is_default)) {
+    await supabaseAdmin.from("addresses").update({ is_default: true }).eq("id", rows[0].id);
+  }
+  if (!rows.some((r: any) => r.is_default_billing)) {
+    const shipDefault = rows.find((r: any) => r.is_default) ?? rows[0];
+    await supabaseAdmin.from("addresses").update({ is_default_billing: true }).eq("id", shipDefault.id);
+  }
+}
+
 meRouter.get("/addresses", async (req, res, next) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("addresses")
-      .select("*")
-      .eq("customer_id", req.user!.id)
-      .order("is_default", { ascending: false });
-    if (error) throw HttpError.internal(error.message);
-    res.json(data ?? []);
+    res.json((await listAddresses(req.user!.id)).map(toAddressDTO));
   } catch (err) {
     next(err);
   }
 });
 
 const addressSchema = z.object({
-  label: z.string().optional(),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  label: z.string().trim().max(40).optional(),
+  firstName: z.string().trim().min(1, "First name is required").max(60),
+  lastName: z.string().trim().min(1, "Last name is required").max(60),
   phone: z.string().refine(isValidIndianMobile, "Enter a valid 10-digit Indian mobile number").transform(normalizeIndianMobile),
-  addressLine1: z.string().min(1),
-  addressLine2: z.string().optional(),
-  landmark: z.string().optional(),
-  city: z.string().min(1),
-  district: z.string().optional(),
+  addressLine1: z.string().trim().min(3, "Enter your house / street address").max(200),
+  addressLine2: z.string().trim().max(200).optional(),
+  landmark: z.string().trim().max(120).optional(),
+  city: z.string().trim().min(2, "Enter your city").max(80),
+  district: z.string().trim().max(80).optional(),
   state: z.string().refine(isValidIndianState, "Select a valid Indian state or union territory"),
   pincode: z.string().refine(isValidIndianPincode, "Enter a valid 6-digit PIN code"),
   addressType: z.enum(["home", "work", "other"]).optional(),
   isDefault: z.boolean().optional(),
+  isDefaultBilling: z.boolean().optional(),
 });
+
+function addressRow(body: Partial<z.infer<typeof addressSchema>>) {
+  const row: Record<string, unknown> = {};
+  const map: Record<string, string> = {
+    label: "label",
+    firstName: "first_name",
+    lastName: "last_name",
+    phone: "phone",
+    addressLine1: "address_line1",
+    addressLine2: "address_line2",
+    landmark: "landmark",
+    city: "city",
+    district: "district",
+    state: "state",
+    pincode: "pincode",
+    addressType: "address_type",
+    isDefault: "is_default",
+    isDefaultBilling: "is_default_billing",
+  };
+  for (const [k, col] of Object.entries(map)) {
+    const v = (body as any)[k];
+    if (v !== undefined) row[col] = v === "" ? null : v;
+  }
+  return row;
+}
+
+async function clearOtherDefaults(customerId: string, body: { isDefault?: boolean; isDefaultBilling?: boolean }) {
+  if (body.isDefault) await supabaseAdmin.from("addresses").update({ is_default: false }).eq("customer_id", customerId);
+  if (body.isDefaultBilling) await supabaseAdmin.from("addresses").update({ is_default_billing: false }).eq("customer_id", customerId);
+}
 
 meRouter.post("/addresses", validate(addressSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof addressSchema>;
-    if (body.isDefault) {
-      await supabaseAdmin.from("addresses").update({ is_default: false }).eq("customer_id", req.user!.id);
-    }
+    const existing = await listAddresses(req.user!.id);
+    if (existing.length >= 20) throw HttpError.badRequest("You can save up to 20 addresses");
+    await clearOtherDefaults(req.user!.id, body);
     const { data, error } = await supabaseAdmin
       .from("addresses")
-      .insert({
-        customer_id: req.user!.id,
-        label: body.label,
-        first_name: body.firstName,
-        last_name: body.lastName,
-        phone: body.phone,
-        address_line1: body.addressLine1,
-        address_line2: body.addressLine2,
-        landmark: body.landmark,
-        city: body.city,
-        district: body.district,
-        state: body.state,
-        pincode: body.pincode,
-        address_type: body.addressType,
-        is_default: body.isDefault ?? false,
-      })
+      .insert({ customer_id: req.user!.id, ...addressRow(body) })
       .select("*")
       .single();
     if (error) throw HttpError.internal(error.message);
-    res.status(201).json(data);
+    await ensureDefaults(req.user!.id);
+    const { data: fresh } = await supabaseAdmin.from("addresses").select("*").eq("id", data.id).single();
+    res.status(201).json(toAddressDTO(fresh ?? data));
   } catch (err) {
     next(err);
   }
@@ -127,33 +213,19 @@ meRouter.post("/addresses", validate(addressSchema), async (req, res, next) => {
 meRouter.patch("/addresses/:id", validate(addressSchema.partial()), async (req, res, next) => {
   try {
     const body = req.body as Partial<z.infer<typeof addressSchema>>;
-    if (body.isDefault) {
-      await supabaseAdmin.from("addresses").update({ is_default: false }).eq("customer_id", req.user!.id);
-    }
+    await clearOtherDefaults(req.user!.id, body);
     const { data, error } = await supabaseAdmin
       .from("addresses")
-      .update({
-        label: body.label,
-        first_name: body.firstName,
-        last_name: body.lastName,
-        phone: body.phone,
-        address_line1: body.addressLine1,
-        address_line2: body.addressLine2,
-        landmark: body.landmark,
-        city: body.city,
-        district: body.district,
-        state: body.state,
-        pincode: body.pincode,
-        address_type: body.addressType,
-        is_default: body.isDefault,
-      })
+      .update(addressRow(body))
       .eq("id", req.params.id)
       .eq("customer_id", req.user!.id)
       .select("*")
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Address not found");
-    res.json(data);
+    await ensureDefaults(req.user!.id);
+    const { data: fresh } = await supabaseAdmin.from("addresses").select("*").eq("id", data.id).single();
+    res.json(toAddressDTO(fresh ?? data));
   } catch (err) {
     next(err);
   }
@@ -161,12 +233,10 @@ meRouter.patch("/addresses/:id", validate(addressSchema.partial()), async (req, 
 
 meRouter.delete("/addresses/:id", async (req, res, next) => {
   try {
-    const { error } = await supabaseAdmin
-      .from("addresses")
-      .delete()
-      .eq("id", req.params.id)
-      .eq("customer_id", req.user!.id);
+    const { error } = await supabaseAdmin.from("addresses").delete().eq("id", req.params.id).eq("customer_id", req.user!.id);
     if (error) throw HttpError.internal(error.message);
+    // Deleting the default promotes the next address so checkout always has one preselected
+    await ensureDefaults(req.user!.id);
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -175,47 +245,84 @@ meRouter.delete("/addresses/:id", async (req, res, next) => {
 
 // ---- Orders (history) ----
 
+const CANCELLABLE = ["pending_payment", "confirmed"];
+
 function toOrderSummaryDTO(o: any) {
+  const items = (o.order_items ?? []) as any[];
   return {
     id: o.id,
     orderNumber: o.order_number,
     status: o.status,
     paymentStatus: o.payment_status,
+    paymentMethod: o.payment_method,
     total: Number(o.total),
-    itemCount: (o.order_items ?? []).reduce((s: number, i: any) => s + i.quantity, 0),
+    itemCount: items.reduce((s: number, i: any) => s + i.quantity, 0),
+    previewItems: items.slice(0, 4).map((i: any) => ({ name: i.product_name_snapshot, image: i.product_image_snapshot ?? null })),
     placedAt: o.placed_at,
     createdAt: o.created_at,
+    canCancel: CANCELLABLE.includes(o.status),
+    canPay: o.status === "pending_payment" && o.payment_method === "razorpay" && o.payment_status !== "paid",
   };
 }
 
-function toOrderDetailDTO(o: any) {
+function toOrderDetailDTO(o: any, invoiceNumber: string | null) {
   return {
     ...toOrderSummaryDTO(o),
     subtotal: Number(o.subtotal),
     discountAmount: Number(o.discount_amount),
+    couponCode: o.coupons?.code ?? null,
     shippingCost: Number(o.shipping_cost),
     giftWrapCost: Number(o.gift_wrap_cost),
+    taxAmount: Number(o.tax_amount ?? 0),
+    cgstAmount: Number(o.cgst_amount ?? 0),
+    sgstAmount: Number(o.sgst_amount ?? 0),
+    igstAmount: Number(o.igst_amount ?? 0),
     shippingAddress: o.shipping_address,
+    billingAddress: o.billing_address ?? null,
     shippingMethod: o.shipping_method,
-    paymentMethod: o.payment_method,
     giftWrap: o.gift_wrap,
     giftMessage: o.gift_message,
+    trackingNumber: o.tracking_number ?? null,
+    courier: o.courier ?? null,
+    paymentReference: o.razorpay_payment_id ?? null,
+    invoiceNumber,
+    invoiceAvailable: Boolean(invoiceNumber) || (o.status !== "pending_payment" && o.status !== "cancelled") || o.payment_status === "paid",
     items: (o.order_items ?? []).map((i: any) => ({
       id: i.id,
       productId: i.product_id,
+      productSlug: i.products?.slug ?? null,
       name: i.product_name_snapshot,
+      sku: i.product_sku_snapshot ?? null,
       image: i.product_image_snapshot,
       unitPrice: Number(i.unit_price_snapshot),
       quantity: i.quantity,
       lineTotal: Number(i.line_total),
       selectedColor: i.selected_color_hex,
+      selectedColorName: i.selected_color_name ?? null,
       customText: i.custom_text,
+      customizations: (i.customizations ?? []).map((c: any) => ({
+        label: c.label,
+        value: c.valueLabel ?? c.textValue ?? "",
+        priceAdjustment: Number(c.priceAdjustment ?? 0),
+      })),
     })),
     statusHistory: (o.order_status_history ?? [])
       .slice()
       .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
       .map((h: any) => ({ status: h.status, note: h.note, at: h.created_at })),
   };
+}
+
+async function loadOwnOrder(orderId: string, customerId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("orders")
+    .select("*, order_items(*, products(slug)), order_status_history(*), coupons(code)")
+    .eq("id", orderId)
+    .eq("customer_id", customerId)
+    .maybeSingle();
+  if (error) throw HttpError.internal(error.message);
+  if (!data) throw HttpError.notFound("Order not found");
+  return data;
 }
 
 meRouter.get("/orders", async (req, res, next) => {
@@ -234,15 +341,101 @@ meRouter.get("/orders", async (req, res, next) => {
 
 meRouter.get("/orders/:id", async (req, res, next) => {
   try {
-    const { data, error } = await supabaseAdmin
+    const order = await loadOwnOrder(req.params.id, req.user!.id);
+    const invoice = await getInvoiceForOrder(order.id);
+    res.json(toOrderDetailDTO(order, invoice?.invoice_number ?? null));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The order's invoice as a PDF — generated on first request once the order is confirmed. */
+meRouter.get("/orders/:id/invoice", async (req, res, next) => {
+  try {
+    const order = await loadOwnOrder(req.params.id, req.user!.id);
+    let invoice = await getInvoiceForOrder(order.id);
+    if (!invoice) {
+      if (order.status === "pending_payment" || (order.status === "cancelled" && order.payment_status !== "paid")) {
+        throw HttpError.badRequest("Your invoice will be available once the order is confirmed");
+      }
+      invoice = await createInvoiceForOrder(order.id);
+    }
+    const pdf = await renderInvoicePdf(invoice.invoice_number, invoice.snapshot, order.status, order.payment_status);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${invoice.invoice_number}.pdf"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const cancelSchema = z.object({ reason: z.string().trim().max(300).optional() });
+
+/** Customers can cancel until making starts (awaiting payment or confirmed). */
+meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), async (req, res, next) => {
+  try {
+    const { reason } = req.body as z.infer<typeof cancelSchema>;
+    const order = await loadOwnOrder(req.params.id, req.user!.id);
+    if (!CANCELLABLE.includes(order.status)) {
+      throw HttpError.badRequest("This order is already being made and can't be cancelled online — please contact us");
+    }
+    const { error } = await supabaseAdmin
       .from("orders")
-      .select("*, order_items(*), order_status_history(*)")
-      .eq("id", req.params.id)
-      .eq("customer_id", req.user!.id)
-      .maybeSingle();
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", order.id)
+      .in("status", CANCELLABLE);
     if (error) throw HttpError.internal(error.message);
-    if (!data) throw HttpError.notFound("Order not found");
-    res.json(toOrderDetailDTO(data));
+    await supabaseAdmin.from("order_status_history").insert({
+      order_id: order.id,
+      status: "cancelled",
+      note: `Cancelled by customer${reason ? `: ${reason}` : ""}`,
+    });
+
+    // Return reserved stock (COD reserves at placement, online orders once paid)
+    if (order.payment_method === "cod" || order.payment_status === "paid") {
+      for (const item of order.order_items ?? []) {
+        if (item.product_id) await supabaseAdmin.rpc("increment_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
+      }
+    }
+
+    const fresh = await loadOwnOrder(order.id, req.user!.id);
+    const to = fresh.guest_email ?? fresh.shipping_address?.email ?? req.user!.email;
+    if (to) {
+      const { variables, listVariables, rawVariables } = buildOrderEmailData(fresh);
+      sendTemplatedEmail({ type: "order_cancelled", to, variables, rawVariables, listVariables, relatedOrderId: fresh.id }).catch(() => {});
+    }
+    if (env.ADMIN_NOTIFICATION_EMAIL) {
+      sendTemplatedEmail({
+        type: "admin_new_enquiry",
+        to: env.ADMIN_NOTIFICATION_EMAIL,
+        variables: {
+          customer_name: `${fresh.shipping_address?.firstName ?? ""} ${fresh.shipping_address?.lastName ?? ""}`.trim() || "A customer",
+          customer_email: to ?? "no email on file",
+          ...storeLinkVariables(),
+        },
+        rawVariables: {
+          enquiry_message: `<strong>Order ${fresh.order_number} was cancelled by the customer.</strong>${reason ? `<br/><br/>Reason: ${reason.replace(/[<>&]/g, "")}` : ""}${fresh.payment_status === "paid" ? "<br/><br/>This order was paid online — please process the refund." : ""}`,
+        },
+        relatedOrderId: fresh.id,
+      }).catch(() => {});
+    }
+
+    const invoice = await getInvoiceForOrder(fresh.id);
+    res.json(toOrderDetailDTO(fresh, invoice?.invoice_number ?? null));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Starts a new online payment for an order still awaiting payment. */
+meRouter.post("/orders/:id/pay", sensitiveLimiter, async (req, res, next) => {
+  try {
+    const { order, razorpayOrder } = await createPaymentForExistingOrder(req.params.id, req.user!.id);
+    res.json({
+      order: { id: order.id, orderNumber: order.order_number, total: Number(order.total) },
+      razorpay: { orderId: razorpayOrder.id, amount: razorpayOrder.amount, currency: razorpayOrder.currency, keyId: env.RAZORPAY_KEY_ID },
+    });
   } catch (err) {
     next(err);
   }
@@ -265,6 +458,8 @@ meRouter.get("/wishlist", async (req, res, next) => {
 
 meRouter.post("/wishlist/:productId", async (req, res, next) => {
   try {
+    const { data: product } = await supabaseAdmin.from("products").select("id").eq("id", req.params.productId).maybeSingle();
+    if (!product) throw HttpError.notFound("Product not found");
     const { error } = await supabaseAdmin
       .from("wishlist_items")
       .upsert(
@@ -384,7 +579,7 @@ meRouter.put("/cart", validate(cartSyncSchema), async (req, res, next) => {
       if (existing) {
         await supabaseAdmin
           .from("cart_items")
-          .update({ quantity: existing.quantity + item.quantity })
+          .update({ quantity: Math.min(20, existing.quantity + item.quantity) })
           .eq("id", existing.id);
       } else {
         await supabaseAdmin.from("cart_items").insert({

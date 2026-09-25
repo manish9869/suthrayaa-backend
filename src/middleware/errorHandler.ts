@@ -11,10 +11,19 @@ export function notFoundHandler(req: Request, res: Response) {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof HttpError) {
-    if (err.status >= 500) logger.error({ err }, err.message);
+    if (err.status >= 500) {
+      // Server-side failures often carry raw database/driver text — log it, never return it
+      logger.error({ err, path: req.path }, err.message);
+      return res.status(err.status).json({ error: { message: "Something went wrong on our side. Please try again.", code: err.code } });
+    }
     return res.status(err.status).json({
       error: { message: err.message, code: err.code, details: err.details },
     });
+  }
+  // Malformed JSON bodies and oversized payloads from body-parser
+  const status = (err as { status?: number; type?: string })?.status
+  if (status === 400 || status === 413) {
+    return res.status(status).json({ error: { message: status === 413 ? "Request is too large" : "Malformed request body", code: "BAD_REQUEST" } });
   }
 
   logger.error({ err }, "Unhandled error");

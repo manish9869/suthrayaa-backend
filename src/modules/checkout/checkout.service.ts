@@ -16,8 +16,9 @@ import {
 import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 import { getShippingQuote } from "../settings/shipping.service.js";
-import { getSetting, getSettingsMap } from "../settings/settings.service.js";
-import { computeGst } from "../settings/tax.service.js";
+import { getSetting } from "../settings/settings.service.js";
+import { computeOrderGst } from "../settings/tax.service.js";
+import { getTaxCategories } from "../settings/taxCategories.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -49,6 +50,9 @@ export interface CustomizationSnapshot {
 
 interface ValidatedLine {
   productId: string;
+  /** True when stock limits this product (tracked, no backorders) — only then is it reserved. */
+  stockLimited: boolean;
+  stock: number;
   name: string;
   sku?: string | null;
   image?: string;
@@ -163,6 +167,8 @@ export async function validateAndPriceCart(
       throw HttpError.badRequest("One of the items in your cart is no longer available");
     }
     if (item.quantity < 1) throw HttpError.badRequest("Invalid quantity");
+    // Marked sold out by the team — not buyable even if inventory isn't tracked
+    if (product.status === "out_of_stock") throw HttpError.badRequest(`"${product.name}" is sold out right now`);
     const stockIsTracked = product.track_inventory !== false;
     const stockExempt = product.allow_backorders || product.continue_selling_when_out_of_stock;
     if (stockIsTracked && !stockExempt && product.stock < item.quantity) {
@@ -219,6 +225,8 @@ export async function validateAndPriceCart(
 
     lines.push({
       productId: product.id,
+      stockLimited: stockIsTracked && !stockExempt,
+      stock: Number(product.stock ?? 0),
       name: product.name,
       sku: product.sku,
       image: primaryImage,
@@ -234,6 +242,16 @@ export async function validateAndPriceCart(
     });
   }
 
+  // Several lines of the same product (different colours / options) share one stock count
+  const qtyByProduct = new Map<string, number>();
+  for (const l of lines) qtyByProduct.set(l.productId, (qtyByProduct.get(l.productId) ?? 0) + l.quantity);
+  for (const l of lines) {
+    const total = qtyByProduct.get(l.productId)!;
+    if (l.stockLimited && total > l.stock) {
+      throw HttpError.badRequest(`"${l.name}" only has ${l.stock} left in stock`);
+    }
+  }
+
   const subtotal = Math.round(lines.reduce((sum, l) => sum + l.lineTotal, 0) * 100) / 100;
 
   let discount = 0;
@@ -247,8 +265,10 @@ export async function validateAndPriceCart(
   }
 
   const netSubtotal = subtotal - discount;
-  const [shippingQuote, giftWrapFee, gstEnabled, pricesIncludeGst, sellerState, defaultTaxCategoryId] = await Promise.all([
-    getShippingQuote(opts.shippingState, netSubtotal, opts.shippingMethod === "express" ? "express" : "standard"),
+  const method = opts.shippingMethod === "express" ? "express" : "standard";
+  const [shippingQuote, altQuote, giftWrapFee, gstEnabled, pricesIncludeGst, sellerState, defaultTaxCategoryId] = await Promise.all([
+    getShippingQuote(opts.shippingState, netSubtotal, method),
+    getShippingQuote(opts.shippingState, netSubtotal, method === "express" ? "standard" : "express"),
     getSetting<number>("shipping.gift_wrap_fee"),
     getSetting<boolean>("tax.gst_enabled"),
     getSetting<boolean>("tax.prices_include_gst"),
@@ -268,35 +288,32 @@ export async function validateAndPriceCart(
   let total = Math.round((netSubtotal + shippingCost + giftWrapCost) * 100) / 100;
 
   if (gstEnabled && opts.shippingState && sellerState) {
-    const rateByCategoryId = await getTaxRatesByCategory();
+    const categories = await getTaxCategories();
+    const fallback = categories.get(defaultTaxCategoryId);
+    // Per-line rates (carts can mix categories); the discount is apportioned before tax and
+    // shipping / gift wrap are taxed at the principal item's rate — see computeOrderGst.
+    const gst = computeOrderGst({
+      lines: lines.map((line) => {
+        const cat = categories.get(line.taxCategoryId ?? "") ?? fallback;
+        return { amount: line.lineTotal, ratePercent: cat?.rate ?? 0, hsn: cat?.hsn ?? null };
+      }),
+      discount,
+      charges: [
+        { label: "Shipping", amount: shippingCost },
+        { label: "Gift wrap", amount: giftWrapCost },
+      ],
+      sellerState,
+      buyerState: opts.shippingState,
+      pricesIncludeGst,
+    });
+    taxAmount = gst.totalTax;
+    cgstAmount = gst.cgst;
+    sgstAmount = gst.sgst;
+    igstAmount = gst.igst;
 
-    // Compute GST per line (rates can differ by product) rather than on the pooled
-    // subtotal, then sum — correct even when the cart mixes tax categories.
-    let totalTax = 0;
-    for (const line of lines) {
-      const rate = rateByCategoryId.get(line.taxCategoryId ?? "") ?? rateByCategoryId.get(defaultTaxCategoryId) ?? 0;
-      const gst = computeGst({
-        amount: line.lineTotal,
-        ratePercent: rate,
-        sellerState,
-        buyerState: opts.shippingState,
-        pricesIncludeGst,
-      });
-      totalTax += gst.totalTax;
-      cgstAmount += gst.cgst;
-      sgstAmount += gst.sgst;
-      igstAmount += gst.igst;
-    }
-    taxAmount = Math.round(totalTax * 100) / 100;
-    cgstAmount = Math.round(cgstAmount * 100) / 100;
-    sgstAmount = Math.round(sgstAmount * 100) / 100;
-    igstAmount = Math.round(igstAmount * 100) / 100;
-
-    // Inclusive pricing: tax is already inside netSubtotal, so the total doesn't change —
+    // Inclusive pricing: tax is already inside the prices, so the total doesn't change —
     // only the breakdown is stored, for invoice display. Exclusive pricing adds it on top.
-    if (!pricesIncludeGst) {
-      total = Math.round((netSubtotal + shippingCost + giftWrapCost + taxAmount) * 100) / 100;
-    }
+    if (!pricesIncludeGst) total = gst.grandTotal;
   }
 
   return {
@@ -312,16 +329,21 @@ export async function validateAndPriceCart(
     sgstAmount,
     igstAmount,
     shippingEstimate: shippingQuote.estimateDays,
+    // Everything the checkout needs to show delivery options without guessing client-side
+    shipping: {
+      method,
+      fee: shippingQuote.fee,
+      standardFee: method === "standard" ? shippingQuote.fee : altQuote.fee,
+      expressFee: method === "express" ? shippingQuote.fee : altQuote.fee,
+      freeShippingApplied: shippingQuote.freeShippingApplied,
+      estimateDays: shippingQuote.estimateDays,
+      zoneName: shippingQuote.zoneName,
+      codAvailable: shippingQuote.codAvailable,
+    },
+    giftWrapFee: Number(giftWrapFee ?? 0),
   };
 }
 
-let taxRateCache: Map<string, number> | null = null;
-async function getTaxRatesByCategory(): Promise<Map<string, number>> {
-  if (taxRateCache) return taxRateCache;
-  const { data } = await supabaseAdmin.from("tax_categories").select("id, rate");
-  taxRateCache = new Map((data ?? []).map((r: any) => [r.id, Number(r.rate)]));
-  return taxRateCache;
-}
 
 export async function validateCoupon(code: string, subtotal: number, customerId?: string) {
   const { data: coupon } = await supabaseAdmin
@@ -379,18 +401,104 @@ export interface ShippingAddressInput {
   pincode: string;
 }
 
+export interface CartLineIssue {
+  index: number;
+  productId: string;
+  message: string;
+  /** "unavailable" lines must be removed; "options" / "quantity" can be fixed on the product page. */
+  kind: "unavailable" | "options" | "quantity";
+}
+
+/**
+ * Checks every cart line on its own and reports all problems at once (instead of the first
+ * one, as validateAndPriceCart does) — so the cart and checkout can flag each line inline
+ * before the customer ever reaches payment.
+ */
+export async function checkCartLines(items: CartItemInput[]): Promise<CartLineIssue[]> {
+  const issues: CartLineIssue[] = [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    try {
+      await validateAndPriceCart([item]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "This item can't be ordered right now";
+      const kind: CartLineIssue["kind"] = /no longer available|sold out/i.test(message)
+        ? "unavailable"
+        : /left in stock|quantity/i.test(message)
+          ? "quantity"
+          : "options";
+      issues.push({ index, productId: item.productId, message, kind });
+    }
+  }
+  return issues;
+}
+
+/** Payment / order rules the checkout shows up front (all admin-configured settings). */
+export async function getCheckoutOptions() {
+  const [razorpayEnabled, codEnabled, codMin, codMax, orderMin, orderMax, giftWrapFee, freeEnabled, freeThreshold] = await Promise.all([
+    getSetting<boolean>("payment.razorpay_enabled"),
+    getSetting<boolean>("payment.cod_enabled"),
+    getSetting<number>("payment.cod_min_amount"),
+    getSetting<number>("payment.cod_max_amount"),
+    getSetting<number>("order.min_amount"),
+    getSetting<number>("order.max_amount"),
+    getSetting<number>("shipping.gift_wrap_fee"),
+    getSetting<boolean>("shipping.free_shipping_enabled"),
+    getSetting<number>("shipping.free_shipping_threshold"),
+  ]);
+  return {
+    payment: {
+      razorpayEnabled: Boolean(razorpayEnabled),
+      codEnabled: Boolean(codEnabled),
+      codMin: Number(codMin ?? 0),
+      codMax: Number(codMax ?? 0),
+    },
+    order: { min: Number(orderMin ?? 0), max: Number(orderMax ?? 0) },
+    giftWrap: { fee: Number(giftWrapFee ?? 0) },
+    // Store-wide default; a shipping zone can override the threshold for its states
+    freeShipping: { enabled: Boolean(freeEnabled), threshold: Number(freeThreshold ?? 0) },
+  };
+}
+
 export interface PlaceOrderInput {
   items: CartItemInput[];
   shippingAddress: ShippingAddressInput;
+  /** Omitted when billing is the same as shipping. */
+  billingAddress?: ShippingAddressInput;
   shippingMethod: string;
   paymentMethod: "cod" | "razorpay";
   couponCode?: string;
   giftWrap?: boolean;
   giftMessage?: string;
   customerId?: string;
+  /** One per checkout attempt — a repeated request returns the same order. */
+  idempotencyKey?: string;
+}
+
+/** Returns the order already created for this idempotency key (with a fresh payment if unpaid). */
+async function existingOrderForKey(key: string, customerId?: string) {
+  const { data: order } = await supabaseAdmin.from("orders").select("*").eq("idempotency_key", key).maybeSingle();
+  if (!order) return null;
+  if ((order.customer_id ?? undefined) !== customerId) throw HttpError.conflict("This checkout was already used — please refresh the page");
+  if (order.payment_method !== "razorpay" || order.payment_status === "paid" || order.status !== "pending_payment") {
+    return { order, razorpayOrder: null };
+  }
+  const razorpayOrder = await razorpay.orders.create({
+    amount: Math.round(Number(order.total) * 100),
+    currency: "INR",
+    receipt: order.order_number,
+    notes: { orderId: order.id },
+  });
+  await supabaseAdmin.from("orders").update({ razorpay_order_id: razorpayOrder.id }).eq("id", order.id);
+  return { order, razorpayOrder };
 }
 
 export async function placeOrder(input: PlaceOrderInput) {
+  if (input.idempotencyKey) {
+    const existing = await existingOrderForKey(input.idempotencyKey, input.customerId);
+    if (existing) return existing;
+  }
+
   const [razorpayEnabled, codEnabled, codMin, codMax, orderMin, orderMax] = await Promise.all([
     getSetting<boolean>("payment.razorpay_enabled"),
     getSetting<boolean>("payment.cod_enabled"),
@@ -410,6 +518,9 @@ export async function placeOrder(input: PlaceOrderInput) {
     shippingState: input.shippingAddress.state,
   });
 
+  if (input.paymentMethod === "cod" && !priced.shipping.codAvailable) {
+    throw HttpError.badRequest(`Cash on Delivery isn't available for ${input.shippingAddress.state} — please pay online`);
+  }
   if (orderMin > 0 && priced.total < orderMin) throw HttpError.badRequest(`Minimum order amount is ${formatPrice(orderMin)}`);
   if (orderMax > 0 && priced.total > orderMax) throw HttpError.badRequest(`Maximum order amount is ${formatPrice(orderMax)}`);
 
@@ -439,6 +550,8 @@ export async function placeOrder(input: PlaceOrderInput) {
       sgst_amount: priced.sgstAmount,
       igst_amount: priced.igstAmount,
       shipping_address: input.shippingAddress,
+      billing_address: input.billingAddress ?? null,
+      idempotency_key: input.idempotencyKey ?? null,
       shipping_method: input.shippingMethod,
       payment_method: input.paymentMethod,
       payment_status: "pending",
@@ -450,6 +563,11 @@ export async function placeOrder(input: PlaceOrderInput) {
     .select("*")
     .single();
 
+  if (orderError?.code === "23505" && input.idempotencyKey) {
+    // A concurrent duplicate of this request won the insert — hand back that order
+    const existing = await existingOrderForKey(input.idempotencyKey, input.customerId);
+    if (existing) return existing;
+  }
   if (orderError || !order) throw HttpError.internal(orderError?.message ?? "Failed to create order");
 
   const { error: itemsError } = await supabaseAdmin.from("order_items").insert(
@@ -468,7 +586,20 @@ export async function placeOrder(input: PlaceOrderInput) {
       line_total: l.lineTotal,
     }))
   );
-  if (itemsError) throw HttpError.internal(itemsError.message);
+  if (itemsError) {
+    await supabaseAdmin.from("orders").delete().eq("id", order.id);
+    throw HttpError.internal(itemsError.message);
+  }
+
+  // COD reserves stock now. The reservation is atomic per product (stock >= qty); if another
+  // customer took the last one a moment ago, undo what was reserved and cancel cleanly.
+  if (isCod) {
+    const reserved = await reserveStock(priced.lines);
+    if (!reserved.ok) {
+      await supabaseAdmin.from("orders").delete().eq("id", order.id);
+      throw HttpError.conflict(`Sorry — "${reserved.failed}" just sold out. Please update your cart.`);
+    }
+  }
 
   await supabaseAdmin.from("order_status_history").insert({
     order_id: order.id,
@@ -477,9 +608,6 @@ export async function placeOrder(input: PlaceOrderInput) {
   });
 
   if (isCod) {
-    for (const line of priced.lines) {
-      await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: line.productId, p_qty: line.quantity });
-    }
     if (priced.coupon) await redeemCoupon(priced.coupon.id, order.id, input.customerId, priced.discount);
     if (input.customerId) await clearServerCart(input.customerId);
 
@@ -516,6 +644,49 @@ export async function placeOrder(input: PlaceOrderInput) {
   await supabaseAdmin.from("orders").update({ razorpay_order_id: razorpayOrder.id }).eq("id", order.id);
 
   return { order: { ...order, razorpay_order_id: razorpayOrder.id }, razorpayOrder };
+}
+
+/**
+ * Starts a fresh Razorpay payment for an order that's still awaiting payment (the customer
+ * closed the payment window or the payment failed) — used by "Pay now" on the order page.
+ */
+export async function createPaymentForExistingOrder(orderId: string, customerId: string) {
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("id, order_number, total, status, payment_status, payment_method, customer_id")
+    .eq("id", orderId)
+    .eq("customer_id", customerId)
+    .maybeSingle();
+  if (!order) throw HttpError.notFound("Order not found");
+  if (order.payment_method !== "razorpay") throw HttpError.badRequest("This order is paid on delivery");
+  if (order.payment_status === "paid") throw HttpError.badRequest("This order is already paid");
+  if (order.status !== "pending_payment") throw HttpError.badRequest("This order can no longer be paid online");
+  const razorpayEnabled = await getSetting<boolean>("payment.razorpay_enabled");
+  if (!razorpayEnabled) throw HttpError.badRequest("Online payment is currently unavailable");
+
+  const razorpayOrder = await razorpay.orders.create({
+    amount: Math.round(Number(order.total) * 100),
+    currency: "INR",
+    receipt: order.order_number,
+    notes: { orderId: order.id },
+  });
+  await supabaseAdmin.from("orders").update({ razorpay_order_id: razorpayOrder.id, payment_status: "pending" }).eq("id", order.id);
+  return { order, razorpayOrder };
+}
+
+/** Atomically reserves stock for every stock-limited line; rolls back on the first failure. */
+async function reserveStock(lines: { productId: string; name: string; quantity: number; stockLimited: boolean }[]) {
+  const done: { productId: string; quantity: number }[] = [];
+  for (const line of lines) {
+    if (!line.stockLimited) continue;
+    const { data: ok } = await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: line.productId, p_qty: line.quantity });
+    if (!ok) {
+      for (const d of done) await supabaseAdmin.rpc("increment_product_stock", { p_product_id: d.productId, p_qty: d.quantity });
+      return { ok: false as const, failed: line.name };
+    }
+    done.push({ productId: line.productId, quantity: line.quantity });
+  }
+  return { ok: true as const };
 }
 
 async function redeemCoupon(couponId: string, orderId: string, customerId: string | undefined, amount: number) {
@@ -621,39 +792,63 @@ export async function verifyRazorpayPayment(input: {
   return markOrderPaidByRazorpayOrderId(input.razorpayOrderId, input.razorpayPaymentId);
 }
 
-/** Idempotent — safe to call from both the client verify-payment call and the Razorpay webhook. */
-export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, razorpayPaymentId?: string) {
-  const { data: order } = await supabaseAdmin
-    .from("orders")
-    .select(
-      "id, order_number, status, payment_status, payment_method, customer_id, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address"
-    )
-    .eq("razorpay_order_id", razorpayOrderId)
-    .maybeSingle();
-
+/**
+ * Idempotent and race-safe — the client verify-payment call and the Razorpay webhook often
+ * arrive together. The order is *claimed* with one conditional update (payment_status still
+ * not 'paid'); only the caller that wins the claim reserves stock, redeems the coupon and
+ * sends emails. `fallbackOrderId` (from the Razorpay order notes) finds the order when the
+ * customer paid an older payment attempt.
+ */
+export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, razorpayPaymentId?: string, fallbackOrderId?: string) {
+  const columns =
+    "id, order_number, status, payment_status, payment_method, customer_id, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address";
+  let { data: order } = await supabaseAdmin.from("orders").select(columns).eq("razorpay_order_id", razorpayOrderId).maybeSingle();
+  if (!order && fallbackOrderId) {
+    ({ data: order } = await supabaseAdmin.from("orders").select(columns).eq("id", fallbackOrderId).maybeSingle());
+  }
   if (!order) return null;
   if (order.payment_status === "paid") return order;
 
-  const { data: items } = await supabaseAdmin
-    .from("order_items")
-    .select("product_id, quantity, product_name_snapshot, unit_price_snapshot, line_total, selected_color_name, custom_text")
-    .eq("order_id", order.id);
-
-  for (const item of items ?? []) {
-    if (item.product_id) {
-      await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
-    }
-  }
-
-  await supabaseAdmin
+  // Paid after the customer (or an admin) cancelled: record the payment, keep it cancelled,
+  // and flag it for a refund rather than silently reviving the order.
+  const cancelled = order.status === "cancelled";
+  const { data: claimed } = await supabaseAdmin
     .from("orders")
     .update({
       payment_status: "paid",
-      status: "confirmed",
+      ...(cancelled ? {} : { status: "confirmed", placed_at: new Date().toISOString() }),
       razorpay_payment_id: razorpayPaymentId,
-      placed_at: new Date().toISOString(),
     })
-    .eq("id", order.id);
+    .eq("id", order.id)
+    .neq("payment_status", "paid")
+    .select("id");
+  if (!claimed?.length) return { ...order, payment_status: "paid" };
+
+  if (cancelled) {
+    await supabaseAdmin.from("order_status_history").insert({
+      order_id: order.id,
+      status: "cancelled",
+      note: "Payment received after cancellation — refund required",
+    });
+    logger.warn({ orderId: order.id }, "Payment captured for a cancelled order — needs a refund");
+    return { ...order, payment_status: "paid" };
+  }
+
+  const { data: items } = await supabaseAdmin
+    .from("order_items")
+    .select("product_id, quantity, product_name_snapshot, unit_price_snapshot, line_total, selected_color_name, custom_text, products(track_inventory, allow_backorders, continue_selling_when_out_of_stock)")
+    .eq("order_id", order.id);
+
+  // The customer has already paid, so stock is reserved best-effort; a shortfall is logged
+  // for the team to handle rather than failing a completed payment.
+  for (const item of items ?? []) {
+    const p: any = (item as any).products;
+    const limited = p && p.track_inventory !== false && !p.allow_backorders && !p.continue_selling_when_out_of_stock;
+    if (item.product_id && limited) {
+      const { data: ok } = await supabaseAdmin.rpc("decrement_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
+      if (!ok) logger.warn({ orderId: order.id, productId: item.product_id }, "Paid order exceeds available stock");
+    }
+  }
 
   await supabaseAdmin.from("order_status_history").insert({
     order_id: order.id,
