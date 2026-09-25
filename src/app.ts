@@ -147,3 +147,8 @@ export function createApp() {
 
   return app;
 }
+
+// Vercel's Express runtime uses this file's default export as the request handler
+// (src/app.ts is the first entrypoint it looks for); server.ts reuses it for local/Node hosting.
+const app = createApp();
+export default app;

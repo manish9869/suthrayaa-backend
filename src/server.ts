@@ -1,9 +1,8 @@
-import { createApp } from "./app.js";
+import app from "./app.js";
 import { env } from "./config/env.js";
 import { logger } from "./lib/logger.js";
 import { warmSettingsCache } from "./modules/settings/settings.service.js";
 
-const app = createApp();
 
 warmSettingsCache().catch((err) => logger.error({ err }, "Failed to warm settings cache at startup"));
 
