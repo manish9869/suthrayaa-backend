@@ -12,12 +12,16 @@ export const BUCKETS = {
   customerUploads: "customer-uploads",
 } as const;
 
+// Kept under Vercel's 4.5 MB serverless request-body cap (multipart overhead included) so
+// oversize files get this API's clear error instead of an opaque platform 413.
+export const MAX_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024;
+
 export const imageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: MAX_IMAGE_UPLOAD_BYTES },
   fileFilter: (_req, file, cb) => {
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.mimetype)) {
-      cb(new Error("Only JPEG, PNG, or WEBP images are allowed"));
+      cb(HttpError.badRequest("Only JPEG, PNG, or WEBP images are allowed"));
       return;
     }
     cb(null, true);
@@ -36,11 +40,11 @@ interface UploadResult {
  * via a client-held signed upload URL, since product image uploads are admin-only and
  * security-sensitive (arbitrary file -> public bucket).
  */
-export async function uploadProductImage(bucket: string, folder: string, buffer: Buffer): Promise<UploadResult> {
+export async function uploadProductImage(bucket: string, folder: string, buffer: Buffer, maxWidth = 1200): Promise<UploadResult> {
   const id = randomUUID();
 
   const [main, thumb] = await Promise.all([
-    sharp(buffer).rotate().resize({ width: 1200, withoutEnlargement: true }).webp({ quality: 82 }).toBuffer(),
+    sharp(buffer).rotate().resize({ width: maxWidth, withoutEnlargement: true }).webp({ quality: 82 }).toBuffer(),
     sharp(buffer).rotate().resize({ width: 400, withoutEnlargement: true }).webp({ quality: 75 }).toBuffer(),
   ]);
 

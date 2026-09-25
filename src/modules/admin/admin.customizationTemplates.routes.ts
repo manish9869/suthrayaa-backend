@@ -81,6 +81,43 @@ adminCustomizationTemplatesRouter.post("/", requirePermission("products.update")
   }
 });
 
+/** Updates a template; `values`, when sent, replaces the whole value list. Products that already
+ * cloned the template keep their own copies (no live link — see the note at the top). */
+adminCustomizationTemplatesRouter.patch("/:id", requirePermission("products.update"), validate(templateSchema.partial()), async (req, res, next) => {
+  try {
+    const b = req.body as Partial<z.infer<typeof templateSchema>>;
+    const { data: template, error } = await supabaseAdmin
+      .from("customization_templates")
+      .update({ name: b.name, type: b.type })
+      .eq("id", req.params.id)
+      .select("*")
+      .maybeSingle();
+    if (error) throw HttpError.internal(error.message);
+    if (!template) throw HttpError.notFound("Template not found");
+
+    if (b.values) {
+      const { error: delErr } = await supabaseAdmin.from("customization_template_values").delete().eq("template_id", template.id);
+      if (delErr) throw HttpError.internal(delErr.message);
+      if (b.values.length) {
+        const { error: insErr } = await supabaseAdmin.from("customization_template_values").insert(
+          b.values.map((v, i) => ({
+            template_id: template.id,
+            label: v.label,
+            value: v.value,
+            price_adjustment: v.priceAdjustment ?? 0,
+            sort_order: i,
+          }))
+        );
+        if (insErr) throw HttpError.internal(insErr.message);
+      }
+    }
+
+    res.json(template);
+  } catch (err) {
+    next(err);
+  }
+});
+
 adminCustomizationTemplatesRouter.delete("/:id", requirePermission("products.update"), async (req, res, next) => {
   try {
     const { error } = await supabaseAdmin.from("customization_templates").delete().eq("id", req.params.id);

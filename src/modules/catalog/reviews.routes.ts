@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { authenticate } from "../../middleware/auth.js";
+import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { validate } from "../../middleware/validate.js";
 import { HttpError } from "../../lib/httpError.js";
 import { toReviewDTO } from "./serializers.js";
@@ -16,9 +17,22 @@ const createReviewSchema = z.object({
   images: z.array(z.string().url()).max(5).optional(),
 });
 
-reviewsRouter.post("/", authenticate, validate(createReviewSchema), async (req, res, next) => {
+reviewsRouter.post("/", sensitiveLimiter, authenticate, validate(createReviewSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof createReviewSchema>;
+
+    const { data: product } = await supabaseAdmin.from("products").select("id").eq("id", body.productId).eq("is_active", true).maybeSingle();
+    if (!product) throw HttpError.notFound("Product not found");
+
+    // One review per customer per product (pending or published)
+    const { data: existing } = await supabaseAdmin
+      .from("reviews")
+      .select("id")
+      .eq("product_id", body.productId)
+      .eq("customer_id", req.user!.id)
+      .limit(1)
+      .maybeSingle();
+    if (existing) throw HttpError.conflict("You've already reviewed this product — thank you!");
 
     const { data: paidOrders } = await supabaseAdmin
       .from("orders")

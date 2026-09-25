@@ -16,7 +16,14 @@ export async function razorpayWebhookHandler(req: Request, res: Response) {
   }
 
   const signature = req.headers["x-razorpay-signature"];
-  const rawBody = req.body as Buffer;
+  const rawBody = req.body as unknown;
+  // The HMAC must be computed over the exact bytes Razorpay sent. If a platform body parser
+  // (e.g. Vercel's Node helpers — disable with NODEJS_HELPERS=0) consumed the stream first,
+  // we get a parsed object instead and can't verify; fail loudly rather than crash.
+  if (!Buffer.isBuffer(rawBody)) {
+    logger.error("Razorpay webhook: raw body unavailable (body was pre-parsed) — set NODEJS_HELPERS=0 on the host");
+    return res.status(500).json({ error: "Raw body unavailable" });
+  }
 
   const expected = crypto.createHmac("sha256", env.RAZORPAY_WEBHOOK_SECRET).update(rawBody).digest("hex");
   const sigBuf = Buffer.from(typeof signature === "string" ? signature : "");

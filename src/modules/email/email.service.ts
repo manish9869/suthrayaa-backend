@@ -140,38 +140,6 @@ export function wrapEmail(
   });
 }
 
-async function send(to: string, subject: string, html: string) {
-  if (!transporter) {
-    logger.warn({ to, subject }, "[dummy] Email not sent — GMAIL_USER/GMAIL_APP_PASSWORD not configured yet");
-    return;
-  }
-  try {
-    await transporter.sendMail({ from: `Suthrayaa <${env.GMAIL_USER}>`, to, subject, html });
-  } catch (err) {
-    logger.error({ err, to, subject }, "Failed to send email");
-  }
-}
-
-export async function sendOrderConfirmationEmail(payload: OrderEmailPayload) {
-  if (!payload.customerEmail) return;
-
-  const html = wrapEmail(
-    `Thanks for your order, ${payload.customerName.split(" ")[0]}!`,
-    `
-    <p style="margin:0 0 20px;">Your order is confirmed and being handcrafted with care.</p>
-    ${renderOrderDetailsHtml(payload)}
-    <p style="margin:26px 0 10px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${T.peachDeep};">Shipping to</p>
-    ${addressBlock(payload.shippingAddress)}
-    <p style="font-size:13px;margin-top:20px;">
-      Payment method: ${payload.paymentMethod === "cod" ? "Cash on Delivery" : "Paid online via Razorpay"}
-    </p>
-    `,
-    { badge: { label: "Order Confirmed", tone: "good" }, highlight: { label: "Order Number", value: payload.orderNumber } }
-  );
-
-  await send(payload.customerEmail, `Order Confirmed — ${payload.orderNumber}`, html);
-}
-
 export async function sendAdminOrderNotification(payload: OrderEmailPayload) {
   if (!env.ADMIN_NOTIFICATION_EMAIL) return;
 

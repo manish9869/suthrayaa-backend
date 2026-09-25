@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { MulterError } from "multer";
 import { HttpError } from "../lib/httpError.js";
 import { logger } from "../lib/logger.js";
 
@@ -18,6 +19,13 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     }
     return res.status(err.status).json({
       error: { message: err.message, code: err.code, details: err.details },
+    });
+  }
+  // Upload limits from multer (e.g. LIMIT_FILE_SIZE) are client errors, not server faults
+  if (err instanceof MulterError) {
+    const tooLarge = err.code === "LIMIT_FILE_SIZE";
+    return res.status(tooLarge ? 413 : 400).json({
+      error: { message: tooLarge ? "Image is too large — please use one under 4 MB" : err.message, code: "BAD_REQUEST" },
     });
   }
   // Malformed JSON bodies and oversized payloads from body-parser

@@ -4,6 +4,7 @@ import { validate } from "../../middleware/validate.js";
 import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { sendContactFormEmails } from "../email/email.service.js";
 import { logger } from "../../lib/logger.js";
+import { background } from "../../lib/background.js";
 
 export const contactRouter = Router();
 
@@ -19,7 +20,7 @@ contactRouter.post("/", sensitiveLimiter, validate(contactSchema), async (req, r
     const payload = req.body as z.infer<typeof contactSchema>;
     // Never blocks the response on email delivery — a misconfigured mailbox shouldn't turn
     // into a 500 for the customer; sendContactFormEmails already logs failures internally.
-    sendContactFormEmails(payload).catch((err) => logger.error({ err }, "sendContactFormEmails failed"));
+    background(sendContactFormEmails(payload).catch((err) => logger.error({ err }, "sendContactFormEmails failed")));
     res.json({ ok: true });
   } catch (err) {
     next(err);

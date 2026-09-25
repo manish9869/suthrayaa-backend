@@ -2,7 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
-import { requirePermission } from "../../middleware/requirePermission.js";
+import { requirePermission, requireAnyPermission } from "../../middleware/requirePermission.js";
+import { imageUpload, uploadProductImage, BUCKETS } from "../storage/upload.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
@@ -480,3 +481,20 @@ adminHeroSlidesRouter.delete("/:id", requirePermission("banners.delete"), async 
     next(err);
   }
 });
+
+/** Uploads a slide image to the hero-media bucket and returns its public URL; the caller
+ * then saves that URL on the slide (create or PATCH). Re-encoded to webp like product images. */
+adminHeroSlidesRouter.post(
+  "/upload-image",
+  requireAnyPermission("banners.create", "banners.update"),
+  imageUpload.single("image"),
+  async (req, res, next) => {
+    try {
+      if (!req.file) throw HttpError.badRequest("No image uploaded");
+      const { url } = await uploadProductImage(BUCKETS.heroMedia, "slides", req.file.buffer, 2000);
+      res.status(201).json({ url });
+    } catch (err) {
+      next(err);
+    }
+  }
+);

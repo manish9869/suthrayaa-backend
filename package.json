@@ -23,10 +23,17 @@
     "promote:admin": "tsx scripts/promote-admin.ts",
     "sync:emails": "tsx scripts/sync-email-templates.ts",
     "attach:studio-images": "tsx scripts/attach-studio-images.ts",
-    "build:emails": "tsx scripts/build-email-templates.ts"
+    "build:emails": "tsx scripts/build-email-templates.ts",
+    "create:admin": "tsx scripts/create-admin.ts",
+    "reset:admin-password": "tsx scripts/reset-admin-password.ts",
+    "clean:test-data": "tsx scripts/clean-dummy-analytics-data.ts",
+    "seed:test-data": "tsx scripts/seed-dummy-analytics-data.ts",
+    "test:email-theme": "tsx scripts/send-theme-test-emails.ts",
+    "docs:openapi": "tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
+    "@vercel/functions": "^3.9.9",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -42,7 +49,8 @@
     "razorpay": "^2.9.4",
     "sharp": "^0.33.5",
     "ws": "^8.18.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@types/compression": "^1.7.5",

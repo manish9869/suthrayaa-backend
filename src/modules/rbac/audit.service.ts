@@ -20,6 +20,7 @@ export const AUDIT_ACTIONS = [
   "ORDER_CANCELLED",
   "ORDER_REFUNDED",
   "SETTINGS_UPDATED",
+  "CONTENT_UPDATED",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

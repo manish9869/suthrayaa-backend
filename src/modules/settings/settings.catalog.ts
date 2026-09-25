@@ -58,13 +58,13 @@ export const SETTINGS: SettingDef[] = [
   def("branding.store_icon_url", "branding", "Store Icon", "url", ""),
   def("branding.default_product_image_url", "branding", "Default Product Image", "url", ""),
   def("branding.default_avatar_url", "branding", "Default Customer Avatar", "url", ""),
-  def("branding.color_primary", "branding", "Primary Color", "color", "#c1502e"),
-  def("branding.color_secondary", "branding", "Secondary Color", "color", "#7c9473"),
-  def("branding.color_accent", "branding", "Accent Color", "color", "#d8a13b"),
-  def("branding.color_background", "branding", "Background Color", "color", "#fbf6ee"),
-  def("branding.color_text", "branding", "Text Color", "color", "#3a2a1f"),
-  def("branding.color_success", "branding", "Success Color", "color", "#2fdc84"),
-  def("branding.color_error", "branding", "Error Color", "color", "#d64545"),
+  def("branding.color_primary", "branding", "Primary Color", "color", "#6d4aff"),
+  def("branding.color_secondary", "branding", "Secondary Color", "color", "#ff9e7a"),
+  def("branding.color_accent", "branding", "Accent Color", "color", "#f5b544"),
+  def("branding.color_background", "branding", "Background Color", "color", "#fcfbff"),
+  def("branding.color_text", "branding", "Text Color", "color", "#1f1a33"),
+  def("branding.color_success", "branding", "Success Color", "color", "#1e7a48"),
+  def("branding.color_error", "branding", "Error Color", "color", "#e5484d"),
 
   // ---- Storefront (permission: settings.storefront) ----
   def("storefront.guest_checkout", "storefront", "Guest Checkout", "boolean", true),
@@ -215,7 +215,6 @@ export const SETTINGS: SettingDef[] = [
 ];
 
 export const SETTINGS_BY_KEY = new Map(SETTINGS.map((s) => [s.key, s]));
-export const SETTING_KEYS = new Set(SETTINGS.map((s) => s.key));
 
 export function groupKeys(group: string): string[] {
   return SETTINGS.filter((s) => s.group === group).map((s) => s.key);

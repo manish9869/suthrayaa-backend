@@ -19,6 +19,7 @@ import { getShippingQuote } from "../settings/shipping.service.js";
 import { getSetting } from "../settings/settings.service.js";
 import { computeOrderGst } from "../settings/tax.service.js";
 import { getTaxCategories } from "../settings/taxCategories.service.js";
+import { background } from "../../lib/background.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -733,11 +734,11 @@ function notifyOrderPlaced(args: NotifyOrderPlacedArgs) {
     items: args.items,
   };
 
-  sendAdminOrderNotification(payload).catch((err) =>
+  background(sendAdminOrderNotification(payload).catch((err) =>
     logger.error({ err, orderNumber: args.orderNumber }, "Admin order notification failed")
-  );
+  ));
 
-  (async () => {
+  background((async () => {
     const invoice = await createInvoiceForOrder(args.orderId);
     if (!payload.customerEmail) return;
 
@@ -770,7 +771,7 @@ function notifyOrderPlaced(args: NotifyOrderPlacedArgs) {
       relatedOrderId: args.orderId,
       attachments,
     });
-  })().catch((err) => logger.error({ err, orderNumber: args.orderNumber }, "Order placed notification failed"));
+  })().catch((err) => logger.error({ err, orderNumber: args.orderNumber }, "Order placed notification failed")));
 }
 
 export async function verifyRazorpayPayment(input: {
@@ -883,7 +884,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
 
   const email = order.shipping_address?.email as string | undefined;
   if (email) {
-    sendTemplatedEmail({
+    background(sendTemplatedEmail({
       type: "payment_successful",
       to: email,
       variables: {
@@ -895,7 +896,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
         ...storeLinkVariables(),
       },
       relatedOrderId: order.id,
-    }).catch((err) => logger.error({ err, orderId: order.id }, "payment_successful email failed"));
+    }).catch((err) => logger.error({ err, orderId: order.id }, "payment_successful email failed")));
   }
 
   return order;
@@ -922,7 +923,7 @@ export async function markOrderFailedByRazorpayOrderId(razorpayOrderId: string) 
   const orderTotal = formatPrice(Number(order.total));
 
   if (customerEmail) {
-    sendTemplatedEmail({
+    background(sendTemplatedEmail({
       type: "payment_failed",
       to: customerEmail,
       variables: {
@@ -934,10 +935,10 @@ export async function markOrderFailedByRazorpayOrderId(razorpayOrderId: string) 
         ...storeLinkVariables(),
       },
       relatedOrderId: order.id,
-    }).catch((err) => logger.error({ err, orderId: order.id }, "payment_failed email failed"));
+    }).catch((err) => logger.error({ err, orderId: order.id }, "payment_failed email failed")));
   }
   if (env.ADMIN_NOTIFICATION_EMAIL) {
-    sendTemplatedEmail({
+    background(sendTemplatedEmail({
       type: "admin_payment_failed",
       to: env.ADMIN_NOTIFICATION_EMAIL,
       variables: {
@@ -949,6 +950,6 @@ export async function markOrderFailedByRazorpayOrderId(razorpayOrderId: string) 
         ...storeLinkVariables(),
       },
       relatedOrderId: order.id,
-    }).catch((err) => logger.error({ err, orderId: order.id }, "admin_payment_failed email failed"));
+    }).catch((err) => logger.error({ err, orderId: order.id }, "admin_payment_failed email failed")));
   }
 }

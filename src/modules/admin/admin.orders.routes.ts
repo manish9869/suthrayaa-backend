@@ -13,6 +13,7 @@ import { formatPrice } from "../../lib/format.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 import { env } from "../../config/env.js";
 import { getSettingSync } from "../settings/settings.service.js";
+import { background } from "../../lib/background.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -300,25 +301,25 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
     const customerEmail = order.guest_email ?? order.shipping_address?.email;
     if (emailType && customerEmail) {
       const { variables, listVariables, rawVariables } = buildOrderEmailData(order);
-      sendTemplatedEmail({
+      background(sendTemplatedEmail({
         type: emailType,
         to: customerEmail,
         variables,
         rawVariables,
         listVariables,
         relatedOrderId: order.id,
-      }).catch(() => {});
+      }).catch(() => {}));
 
       // A refund email only makes sense when money was actually taken
       if ((body.status === "cancelled" || body.status === "refunded") && order.payment_status === "paid") {
-        sendTemplatedEmail({
+        background(sendTemplatedEmail({
           type: "refund_processed",
           to: customerEmail,
           variables,
           rawVariables,
           listVariables,
           relatedOrderId: order.id,
-        }).catch(() => {});
+        }).catch(() => {}));
       }
     }
 

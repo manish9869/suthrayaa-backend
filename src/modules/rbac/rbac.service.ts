@@ -76,11 +76,6 @@ export async function countActiveSuperAdmins(): Promise<number> {
   return new Set((data ?? []).map((r: any) => r.user_id)).size;
 }
 
-export async function getSuperAdminRoleId(): Promise<string | null> {
-  const { data } = await supabaseAdmin.from("roles").select("id").eq("slug", SUPER_ADMIN_SLUG).maybeSingle();
-  return data?.id ?? null;
-}
-
 /**
  * Privilege-escalation guard: permissions an admin may hand out. A Super Admin may grant
  * anything; everyone else only permissions they hold themselves — otherwise a role editor

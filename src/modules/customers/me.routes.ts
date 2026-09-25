@@ -12,6 +12,7 @@ import { createPaymentForExistingOrder } from "../checkout/checkout.service.js";
 import { buildOrderEmailData } from "../admin/admin.orders.routes.js";
 import { sendTemplatedEmail, storeLinkVariables } from "../email/email.service.js";
 import { env } from "../../config/env.js";
+import { background } from "../../lib/background.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -403,10 +404,10 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
     const to = fresh.guest_email ?? fresh.shipping_address?.email ?? req.user!.email;
     if (to) {
       const { variables, listVariables, rawVariables } = buildOrderEmailData(fresh);
-      sendTemplatedEmail({ type: "order_cancelled", to, variables, rawVariables, listVariables, relatedOrderId: fresh.id }).catch(() => {});
+      background(sendTemplatedEmail({ type: "order_cancelled", to, variables, rawVariables, listVariables, relatedOrderId: fresh.id }).catch(() => {}));
     }
     if (env.ADMIN_NOTIFICATION_EMAIL) {
-      sendTemplatedEmail({
+      background(sendTemplatedEmail({
         type: "admin_new_enquiry",
         to: env.ADMIN_NOTIFICATION_EMAIL,
         variables: {
@@ -418,7 +419,7 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
           enquiry_message: `<strong>Order ${fresh.order_number} was cancelled by the customer.</strong>${reason ? `<br/><br/>Reason: ${reason.replace(/[<>&]/g, "")}` : ""}${fresh.payment_status === "paid" ? "<br/><br/>This order was paid online — please process the refund." : ""}`,
         },
         relatedOrderId: fresh.id,
-      }).catch(() => {});
+      }).catch(() => {}));
     }
 
     const invoice = await getInvoiceForOrder(fresh.id);
@@ -451,6 +452,27 @@ meRouter.get("/wishlist", async (req, res, next) => {
       .eq("customer_id", req.user!.id);
     if (error) throw HttpError.internal(error.message);
     res.json((data ?? []).map((w: any) => (w.products ? toProductDTO(w.products) : null)).filter(Boolean));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Replaces the whole wishlist (used by the storefront's sync after sign-in / on change). */
+meRouter.put("/wishlist", validate(z.object({ productIds: z.array(z.string().uuid()).max(200) })), async (req, res, next) => {
+  try {
+    const productIds = [...new Set((req.body as { productIds: string[] }).productIds)];
+    const { error: delErr } = await supabaseAdmin.from("wishlist_items").delete().eq("customer_id", req.user!.id);
+    if (delErr) throw HttpError.internal(delErr.message);
+    if (productIds.length) {
+      // Skip ids for products that no longer exist, rather than failing the whole sync on an FK error
+      const { data: existing } = await supabaseAdmin.from("products").select("id").in("id", productIds);
+      const valid = (existing ?? []).map((p) => p.id);
+      if (valid.length) {
+        const { error } = await supabaseAdmin.from("wishlist_items").insert(valid.map((id) => ({ customer_id: req.user!.id, product_id: id })));
+        if (error) throw HttpError.internal(error.message);
+      }
+    }
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
@@ -501,6 +523,7 @@ function resolveCartCustomizations(product: any, selections: any[]) {
       const value = group.values.find((v: any) => v.id === s.valueId);
       return {
         customizationId: group.id,
+        valueId: value?.id,
         label: group.label,
         valueLabel: value?.label,
         textValue: s.textValue,
@@ -552,16 +575,45 @@ const cartSyncSchema = z.object({
         )
         .optional(),
     })
-  ),
+  ).max(100),
+  /** "merge" (default): additive union into the server cart — for folding a guest cart in once.
+   * "replace": the server cart becomes exactly `items` — for ongoing sync of a signed-in cart. */
+  mode: z.enum(["merge", "replace"]).optional(),
 });
 
 // Merges the client's (possibly guest) cart into the server cart — additive union keyed on
-// product+color+customText, mirroring the key logic in the frontend's Zustand cart store.
+// product+color+customText, mirroring the key logic in the frontend's Zustand cart store —
+// or, with mode "replace", overwrites it.
 meRouter.put("/cart", validate(cartSyncSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof cartSyncSchema>;
 
-    for (const item of body.items) {
+    if (body.mode === "replace") {
+      const { error: delErr } = await supabaseAdmin.from("cart_items").delete().eq("customer_id", req.user!.id);
+      if (delErr) throw HttpError.internal(delErr.message);
+      // Collapse duplicate lines client-side bugs could send, so the unique index can't reject the insert
+      const lines = new Map<string, (typeof body.items)[number]>();
+      for (const item of body.items) {
+        const key = [item.productId, item.selectedColor ?? "", item.customText ?? "", JSON.stringify(item.customizations ?? [])].join("|");
+        const prev = lines.get(key);
+        lines.set(key, prev ? { ...prev, quantity: Math.min(20, prev.quantity + item.quantity) } : item);
+      }
+      if (lines.size) {
+        const { error: insErr } = await supabaseAdmin.from("cart_items").insert(
+          [...lines.values()].map((item) => ({
+            customer_id: req.user!.id,
+            product_id: item.productId,
+            quantity: item.quantity,
+            selected_color_hex: item.selectedColor ?? "",
+            custom_text: item.customText ?? "",
+            customizations: item.customizations ?? [],
+          }))
+        );
+        if (insErr) throw HttpError.internal(insErr.message);
+      }
+    }
+
+    for (const item of body.mode === "replace" ? [] : body.items) {
       const colorKey = item.selectedColor ?? "";
       const textKey = item.customText ?? "";
       const customizations = item.customizations ?? [];
