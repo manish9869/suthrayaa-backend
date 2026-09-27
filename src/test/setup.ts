@@ -26,6 +26,10 @@ vi.mock("../config/razorpay.js", () => ({
     orders: {
       create: async (o: { amount: number; currency: string }) => ({ id: `order_test_${++rzp}`, amount: o.amount, currency: o.currency }),
     },
+    // a spy — tests reach it through the mocked module to inspect / fail refunds
+    payments: {
+      refund: vi.fn(async (_paymentId: string, o: { amount: number }) => ({ id: `rfnd_test_${++rzp}`, amount: o.amount, status: "processed" })),
+    },
   },
   isRazorpayLive: false,
 }));

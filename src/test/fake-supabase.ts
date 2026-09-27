@@ -28,6 +28,11 @@ const UNIQUE: Record<string, string[][]> = {
   coupons: [["code"]],
 };
 
+/** Column defaults the real schema applies on insert (only the ones app logic compares against). */
+const DEFAULTS: Record<string, Row> = {
+  orders: { stock_committed: false, refunded_amount: 0 },
+};
+
 const singular = (t: string) => (t.endsWith("ies") ? t.slice(0, -3) + "y" : t.endsWith("s") ? t.slice(0, -1) : t);
 
 /** Parses a PostgREST select string into its relation tree (columns are always returned whole). */
@@ -97,7 +102,13 @@ export class FakeSupabase {
         if (c) c.uses_count = (c.uses_count ?? 0) + 1;
         return null;
       },
-      next_order_number: () => `ORD-2026-${String((this.counters.order = (this.counters.order ?? 0) + 1)).padStart(4, "0")}`,
+      try_increment_coupon_uses: ({ p_coupon_id }) => {
+        const c = this.tables.coupons?.find((r) => r.id === p_coupon_id);
+        if (!c || (c.max_uses != null && (c.uses_count ?? 0) >= c.max_uses)) return false;
+        c.uses_count = (c.uses_count ?? 0) + 1;
+        return true;
+      },
+            next_order_number: () => `ORD-2026-${String((this.counters.order = (this.counters.order ?? 0) + 1)).padStart(4, "0")}`,
       next_invoice_number: () => `INV-2026-${String((this.counters.invoice = (this.counters.invoice ?? 0) + 1)).padStart(4, "0")}`,
     };
   }
@@ -307,7 +318,7 @@ class Query implements PromiseLike<any> {
             continue;
           }
         }
-        const row = { id: raw.id ?? randomUUID(), created_at: now, ...raw };
+        const row = { id: raw.id ?? randomUUID(), created_at: now, ...DEFAULTS[this.name], ...raw };
         const clash = this.db.uniqueViolation(this.name, row);
         if (clash) return { data: null, error: clash };
         t.push(row);

@@ -8,7 +8,7 @@ import { HttpError } from "../../lib/httpError.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
-import { createPaymentForExistingOrder } from "../checkout/checkout.service.js";
+import { createPaymentForExistingOrder, restoreOrderStock } from "../checkout/checkout.service.js";
 import { buildOrderEmailData } from "../admin/admin.orders.routes.js";
 import { sendTemplatedEmail, storeLinkVariables } from "../email/email.service.js";
 import { env } from "../../config/env.js";
@@ -381,24 +381,24 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
     if (!CANCELLABLE.includes(order.status)) {
       throw HttpError.badRequest("This order is already being made and can't be cancelled online — please contact us");
     }
-    const { error } = await supabaseAdmin
+    // Conditional on the status still being cancellable — of two concurrent cancels (or a
+    // cancel racing an admin moving the order into making) only one wins.
+    const { data: claimed, error } = await supabaseAdmin
       .from("orders")
       .update({ status: "cancelled", updated_at: new Date().toISOString() })
       .eq("id", order.id)
-      .in("status", CANCELLABLE);
+      .in("status", CANCELLABLE)
+      .select("id");
     if (error) throw HttpError.internal(error.message);
+    if (!claimed?.length) throw HttpError.conflict("This order was just updated — please refresh and try again");
     await supabaseAdmin.from("order_status_history").insert({
       order_id: order.id,
       status: "cancelled",
-      note: `Cancelled by customer${reason ? `: ${reason}` : ""}`,
+      note: `Cancelled by customer${reason ? `: ${reason}` : ""}${order.payment_status === "paid" ? " — refund required" : ""}`,
     });
 
-    // Return reserved stock (COD reserves at placement, online orders once paid)
-    if (order.payment_method === "cod" || order.payment_status === "paid") {
-      for (const item of order.order_items ?? []) {
-        if (item.product_id) await supabaseAdmin.rpc("increment_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
-      }
-    }
+    // Returns stock only if this order is holding some (COD from placement, online once paid)
+    await restoreOrderStock(order.id);
 
     const fresh = await loadOwnOrder(order.id, req.user!.id);
     const to = fresh.guest_email ?? fresh.shipping_address?.email ?? req.user!.email;

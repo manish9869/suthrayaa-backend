@@ -21,6 +21,7 @@ export const AUDIT_ACTIONS = [
   "ORDER_REFUNDED",
   "SETTINGS_UPDATED",
   "CONTENT_UPDATED",
+  "REPORT_EXPORTED",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

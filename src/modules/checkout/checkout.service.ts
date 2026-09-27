@@ -150,7 +150,7 @@ function resolveCustomizations(product: any, selections: CustomizationSelectionI
 
 export async function validateAndPriceCart(
   items: CartItemInput[],
-  opts: { shippingMethod?: string; couponCode?: string; giftWrap?: boolean; customerId?: string; shippingState?: string } = {}
+  opts: { shippingMethod?: string; couponCode?: string; giftWrap?: boolean; customerId?: string; customerEmail?: string; shippingState?: string } = {}
 ) {
   if (!items.length) throw HttpError.badRequest("Cart is empty");
 
@@ -258,7 +258,7 @@ export async function validateAndPriceCart(
   let discount = 0;
   let coupon: any = null;
   if (opts.couponCode) {
-    coupon = await validateCoupon(opts.couponCode, subtotal, opts.customerId);
+    coupon = await validateCoupon(opts.couponCode, subtotal, opts.customerId, opts.customerEmail);
     discount =
       coupon.type === "percent"
         ? Math.round(((subtotal * Number(coupon.value)) / 100) * 100) / 100
@@ -346,7 +346,7 @@ export async function validateAndPriceCart(
 }
 
 
-export async function validateCoupon(code: string, subtotal: number, customerId?: string) {
+export async function validateCoupon(code: string, subtotal: number, customerId?: string, customerEmail?: string) {
   const { data: coupon } = await supabaseAdmin
     .from("coupons")
     .select("*")
@@ -365,13 +365,22 @@ export async function validateCoupon(code: string, subtotal: number, customerId?
   if (coupon.max_uses != null && coupon.uses_count >= coupon.max_uses) {
     throw HttpError.badRequest("This coupon has reached its usage limit");
   }
-  if (customerId && coupon.max_uses_per_customer != null) {
-    const { count } = await supabaseAdmin
-      .from("coupon_redemptions")
-      .select("id", { count: "exact", head: true })
-      .eq("coupon_id", coupon.id)
-      .eq("customer_id", customerId);
-    if ((count ?? 0) >= coupon.max_uses_per_customer) {
+  if (coupon.max_uses_per_customer != null) {
+    // Signed-in customers are counted by account, and everyone (guests included) by email —
+    // otherwise checking out as a guest would sidestep a once-per-customer coupon.
+    const counts = await Promise.all([
+      customerId
+        ? supabaseAdmin.from("coupon_redemptions").select("id", { count: "exact", head: true }).eq("coupon_id", coupon.id).eq("customer_id", customerId)
+        : Promise.resolve({ count: 0 }),
+      customerEmail
+        ? supabaseAdmin
+            .from("coupon_redemptions")
+            .select("id", { count: "exact", head: true })
+            .eq("coupon_id", coupon.id)
+            .ilike("customer_email", customerEmail.trim())
+        : Promise.resolve({ count: 0 }),
+    ]);
+    if (Math.max(...counts.map((c) => c.count ?? 0)) >= coupon.max_uses_per_customer) {
       throw HttpError.badRequest("You've already used this coupon");
     }
   }
@@ -516,6 +525,7 @@ export async function placeOrder(input: PlaceOrderInput) {
     couponCode: input.couponCode,
     giftWrap: input.giftWrap,
     customerId: input.customerId,
+    customerEmail: input.shippingAddress.email,
     shippingState: input.shippingAddress.state,
   });
 
@@ -600,6 +610,18 @@ export async function placeOrder(input: PlaceOrderInput) {
       await supabaseAdmin.from("orders").delete().eq("id", order.id);
       throw HttpError.conflict(`Sorry — "${reserved.failed}" just sold out. Please update your cart.`);
     }
+    await supabaseAdmin.from("orders").update({ stock_committed: true }).eq("id", order.id);
+
+    // The coupon's usage limit is enforced by the increment itself — two customers racing for
+    // its last use can't both get it.
+    if (priced.coupon) {
+      const redeemed = await redeemCoupon(priced.coupon.id, order.id, input.customerId, input.shippingAddress.email, priced.discount, true);
+      if (!redeemed) {
+        await restoreOrderStock(order.id);
+        await supabaseAdmin.from("orders").delete().eq("id", order.id);
+        throw HttpError.conflict("This coupon has just reached its usage limit — please remove it and try again");
+      }
+    }
   }
 
   await supabaseAdmin.from("order_status_history").insert({
@@ -609,7 +631,6 @@ export async function placeOrder(input: PlaceOrderInput) {
   });
 
   if (isCod) {
-    if (priced.coupon) await redeemCoupon(priced.coupon.id, order.id, input.customerId, priced.discount);
     if (input.customerId) await clearServerCart(input.customerId);
 
     notifyOrderPlaced({
@@ -690,14 +711,64 @@ async function reserveStock(lines: { productId: string; name: string; quantity: 
   return { ok: true as const };
 }
 
-async function redeemCoupon(couponId: string, orderId: string, customerId: string | undefined, amount: number) {
+/**
+ * Counts a coupon use. With `enforceLimit` the increment only succeeds while the coupon is
+ * under its max_uses (returns false otherwise). Without it — an online order the customer has
+ * already paid for at the discounted price — the use is recorded regardless and an overshoot
+ * is only logged.
+ */
+async function redeemCoupon(
+  couponId: string,
+  orderId: string,
+  customerId: string | undefined,
+  customerEmail: string | undefined,
+  amount: number,
+  enforceLimit: boolean
+): Promise<boolean> {
+  const { data: counted } = await supabaseAdmin.rpc("try_increment_coupon_uses", { p_coupon_id: couponId });
+  if (!counted) {
+    if (enforceLimit) return false;
+    logger.warn({ couponId, orderId }, "Paid order used a coupon past its usage limit");
+    await supabaseAdmin.rpc("increment_coupon_uses", { p_coupon_id: couponId });
+  }
   await supabaseAdmin.from("coupon_redemptions").insert({
     coupon_id: couponId,
     order_id: orderId,
     customer_id: customerId ?? null,
+    customer_email: customerEmail?.trim().toLowerCase() ?? null,
     amount_discounted: amount,
   });
-  await supabaseAdmin.rpc("increment_coupon_uses", { p_coupon_id: couponId });
+  return true;
+}
+
+/**
+ * Returns an order's stock to inventory — at most once. The order's stock_committed flag is
+ * released with a conditional update first, so only one caller (customer cancel, admin
+ * cancel, refund with restock) ever wins; an order that never took stock (unpaid online
+ * order, late payment on a cancelled one) returns nothing.
+ */
+export async function restoreOrderStock(orderId: string): Promise<boolean> {
+  const { data: released } = await supabaseAdmin
+    .from("orders")
+    .update({ stock_committed: false })
+    .eq("id", orderId)
+    .eq("stock_committed", true)
+    .select("id");
+  if (!released?.length) return false;
+
+  const { data: items } = await supabaseAdmin
+    .from("order_items")
+    .select("product_id, quantity, products(track_inventory, allow_backorders, continue_selling_when_out_of_stock)")
+    .eq("order_id", orderId);
+  for (const item of items ?? []) {
+    const p: any = (item as any).products;
+    // Mirrors what was taken: untracked / backorderable products were never decremented
+    const limited = p && p.track_inventory !== false && !p.allow_backorders && !p.continue_selling_when_out_of_stock;
+    if (item.product_id && limited) {
+      await supabaseAdmin.rpc("increment_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
+    }
+  }
+  return true;
 }
 
 async function clearServerCart(customerId: string) {
@@ -802,7 +873,7 @@ export async function verifyRazorpayPayment(input: {
  */
 export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, razorpayPaymentId?: string, fallbackOrderId?: string) {
   const columns =
-    "id, order_number, status, payment_status, payment_method, customer_id, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address";
+    "id, order_number, status, payment_status, payment_method, customer_id, guest_email, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address";
   let { data: order } = await supabaseAdmin.from("orders").select(columns).eq("razorpay_order_id", razorpayOrderId).maybeSingle();
   if (!order && fallbackOrderId) {
     ({ data: order } = await supabaseAdmin.from("orders").select(columns).eq("id", fallbackOrderId).maybeSingle());
@@ -817,7 +888,9 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
     .from("orders")
     .update({
       payment_status: "paid",
-      ...(cancelled ? {} : { status: "confirmed", placed_at: new Date().toISOString() }),
+      paid_at: new Date().toISOString(),
+      // stock is taken just below — a payment on a cancelled order takes none
+      ...(cancelled ? {} : { status: "confirmed", placed_at: new Date().toISOString(), stock_committed: true }),
       razorpay_payment_id: razorpayPaymentId,
     })
     .eq("id", order.id)
@@ -858,7 +931,14 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
   });
 
   if (order.coupon_id) {
-    await redeemCoupon(order.coupon_id, order.id, order.customer_id ?? undefined, Number(order.discount_amount));
+    await redeemCoupon(
+      order.coupon_id,
+      order.id,
+      order.customer_id ?? undefined,
+      order.guest_email ?? order.shipping_address?.email,
+      Number(order.discount_amount),
+      false
+    );
   }
   if (order.customer_id) await clearServerCart(order.customer_id);
 
