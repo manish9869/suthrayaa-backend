@@ -4,6 +4,8 @@
  * branded shell. Everything is inline-styled and table-based for Gmail / Outlook / Apple Mail.
  */
 
+import { getActiveThemeColorsSync, mixHex } from "../theme/theme.service.js";
+
 /* ============================================================ tokens */
 
 export const T = {
@@ -311,3 +313,34 @@ ${o.body}
 </html>`;
 }
 
+
+/* ============================================================ storefront theme */
+
+/**
+ * Recolours finished email HTML to the storefront theme chosen in Admin → Theme. Every template
+ * (generated or admin-edited) and every code-built email uses the brand tokens in `T`, so each
+ * brand colour is swapped for its equivalent in the active theme. Status colours (green / red /
+ * gold) and white are kept for legibility. With the default theme active this is a no-op.
+ */
+export function applyStorefrontTheme(html: string): string {
+  const c = getActiveThemeColorsSync();
+  if (!c) return html;
+  const map: Record<string, string> = {
+    [T.canvas]: c.muted,
+    [T.ink]: c.ink,
+    [T.inkSoft]: mixHex(c.ink, "#ffffff", 0.08),
+    [T.text]: c.foreground,
+    [T.muted]: c.mutedForeground,
+    [T.faint]: mixHex(c.mutedForeground, c.background, 0.45),
+    [T.border]: c.border,
+    [T.lilac]: mixHex(c.accent, "#ffffff", 0.5),
+    [T.violet]: c.primary,
+    [T.violetSoft]: c.accent,
+    [T.lilacText]: mixHex(c.primary, "#ffffff", 0.6),
+    [T.peach]: c.secondary,
+    [T.peachDeep]: c.rose,
+    [T.peachSoft]: c.blush,
+  };
+  const lookup = new Map(Object.entries(map).map(([from, to]) => [from.toLowerCase(), to]));
+  return html.replace(/#[0-9a-f]{6}\b/gi, (hex) => lookup.get(hex.toLowerCase()) ?? hex);
+}

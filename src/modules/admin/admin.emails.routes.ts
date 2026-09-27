@@ -7,6 +7,7 @@ import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { substituteTemplate, resendLoggedEmail, renderFinalEmailHtml, renderOrderDetailsHtml, renderAddressHtml } from "../email/email.service.js";
+import { applyStorefrontTheme } from "../email/theme.js";
 
 export const adminEmailTemplatesRouter = Router();
 export const adminEmailLogsRouter = Router();
@@ -151,7 +152,8 @@ adminEmailTemplatesRouter.post("/:id/preview", requirePermission("emails.view"),
     if (!template) throw HttpError.notFound("Template not found");
     res.json({
       subject: substituteTemplate(template.subject, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS),
-      bodyHtml: substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS),
+      // Same recolouring as real sends, so the preview matches the active storefront theme
+      bodyHtml: applyStorefrontTheme(substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS)),
     });
   } catch (err) {
     next(err);

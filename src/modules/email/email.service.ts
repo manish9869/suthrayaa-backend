@@ -4,7 +4,7 @@ import { logger } from "../../lib/logger.js";
 import { formatPrice } from "../../lib/format.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { getSettingSync } from "../settings/settings.service.js";
-import { T, SANS, SERIF, type Tone, eyebrow, h1, strip, shell } from "./theme.js";
+import { T, SANS, SERIF, type Tone, eyebrow, h1, strip, shell, applyStorefrontTheme } from "./theme.js";
 
 const transporter = isEmailConfigured
   ? nodemailer.createTransport({
@@ -124,7 +124,7 @@ export function wrapEmail(
     h1(escapeHtml(title)),
     options.highlight ? strip([{ label: options.highlight.label, value: escapeHtml(options.highlight.value), mono: true }]) : "",
   ].join("\n");
-  return shell({
+  return applyStorefrontTheme(shell({
     title,
     preheader: title,
     admin: options.admin,
@@ -137,7 +137,7 @@ export function wrapEmail(
       instagram: links.instagram_url || undefined,
       facebook: links.facebook_url || undefined,
     },
-  });
+  }));
 }
 
 export async function sendAdminOrderNotification(payload: OrderEmailPayload) {
@@ -262,7 +262,7 @@ const EMAIL_TYPE_BADGE: Record<string, { label: string; tone: BadgeTone }> = {
  * second one. Shared by the real send path and the admin's "send test email" action so a test
  * send actually looks like the email a customer would receive. */
 export function renderFinalEmailHtml(type: string, subject: string, bodyHtml: string, orderNumber?: string): string {
-  if (/^\s*<!doctype html/i.test(bodyHtml)) return bodyHtml;
+  if (/^\s*<!doctype html/i.test(bodyHtml)) return applyStorefrontTheme(bodyHtml);
   return wrapEmail(subject, bodyHtml, {
     badge: EMAIL_TYPE_BADGE[type],
     highlight: orderNumber ? { label: "Order", value: orderNumber } : undefined,

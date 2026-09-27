@@ -200,9 +200,10 @@ export const SETTINGS: SettingDef[] = [
   def("maintenance.expected_return", "maintenance", "Expected Return Time", "string", ""),
 
   // ---- Analytics (permission: settings.analytics — IDs only, never raw scripts) ----
-  def("analytics.ga_measurement_id", "analytics", "Google Analytics Measurement ID", "string", "", { isPublic: false }),
-  def("analytics.gtm_id", "analytics", "Google Tag Manager ID", "string", "", { isPublic: false }),
-  def("analytics.meta_pixel_id", "analytics", "Meta Pixel ID", "string", "", { isPublic: false }),
+  // Tracking IDs are public by nature (they appear in every page's source) — the storefront loads them
+  def("analytics.ga_measurement_id", "analytics", "Google Analytics Measurement ID", "string", "G-X234H3LGLM"),
+  def("analytics.gtm_id", "analytics", "Google Tag Manager ID", "string", ""),
+  def("analytics.meta_pixel_id", "analytics", "Meta Pixel ID", "string", ""),
 
   // ---- Legal ----
   def("legal.privacy_url", "legal", "Privacy Policy URL", "url", "/privacy"),

@@ -15,7 +15,9 @@ import { env } from "./config/env.js";
 import { supabaseAdmin } from "./config/supabase.js";
 import { logger } from "./lib/logger.js";
 import { publicContentRouter, adminContentRouter } from "./modules/content/content.routes.js";
+import { authRouter } from "./modules/auth/auth.routes.js";
 import { publicThemeRouter, adminThemeRouter } from "./modules/theme/theme.routes.js";
+import { warmThemeCache } from "./modules/theme/theme.service.js";
 import { newsletterRouter, adminNewsletterRouter } from "./modules/content/newsletter.routes.js";
 import { buildOpenApiSpec, SWAGGER_UI_HTML, SWAGGER_UI_CSP } from "./docs/openapi.js";
 import { warmSettingsCache } from "./modules/settings/settings.service.js";
@@ -87,8 +89,8 @@ export function createApp() {
   // Keep the settings cache loaded/fresh for the synchronous getSettingSync() readers —
   // serverless instances never run server.ts's startup code. Cheap no-op within the TTL.
   app.use((_req, _res, next) => {
-    warmSettingsCache()
-      .catch((err) => logger.error({ err }, "Failed to load site settings"))
+    Promise.all([warmSettingsCache(), warmThemeCache()])
+      .catch((err) => logger.error({ err }, "Failed to load site settings / theme"))
       .finally(() => next());
   });
 
@@ -126,6 +128,7 @@ export function createApp() {
   app.use("/api/nav-items", publicNavRouter);
   app.use("/api/footer-links", publicFooterRouter);
   app.use("/api/homepage-sections", publicHomepageSectionsRouter);
+  app.use("/api/auth", authRouter);
   app.use("/api/content", publicContentRouter);
   app.use("/api/theme", publicThemeRouter);
   app.use("/api/newsletter", newsletterRouter);

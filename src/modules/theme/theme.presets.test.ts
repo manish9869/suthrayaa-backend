@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_THEME_ID, THEME_PRESETS, THEME_PRESETS_BY_ID, THEME_TOKENS } from "./theme.presets.js";
-import { themeColorsSchema } from "./theme.service.js";
+import { themeColorsSchema, themeInvoiceAccents } from "./theme.service.js";
 
 describe("theme presets", () => {
   it("has 14 presets with unique ids", () => {
@@ -61,5 +61,14 @@ describe("theme preset readability (WCAG AA)", () => {
     expect(contrast(c.mutedForeground, c.background)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(c.accentForeground, c.accent)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(c.secondaryForeground, c.secondary)).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("invoice accents derived from each theme", () => {
+  it.each(THEME_PRESETS.map((p) => [p.id, p.colors] as const))("%s gives four readable accent labels", (_id, c) => {
+    const accents = themeInvoiceAccents(c);
+    expect(Object.keys(accents).sort()).toEqual(["peach", "rose", "teal", "violet"]);
+    // Section labels are small uppercase text on white — keep them at least 3:1
+    for (const a of Object.values(accents)) expect(contrast(a.label, "#ffffff")).toBeGreaterThanOrEqual(3);
   });
 });
