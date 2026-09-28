@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { InvoiceSnapshot } from "./invoice.service.js";
+import { getActiveThemeColorsSync, mixHex, themeInvoiceAccents, type InvoiceAccent, type InvoiceAccentKey } from "../theme/theme.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -10,7 +11,8 @@ import type { InvoiceSnapshot } from "./invoice.service.js";
    BRAND — matches the storefront (violet / peach / lilac / ink)
    ============================================================ */
 
-const C = {
+/** The reference design (default storefront theme). Never mutated — see applyInvoiceTheme(). */
+const BASE_C = {
   ink: "#1C1642",
   inkSoft: "#2A2258",
   violet: "#6D4AFF",
@@ -30,12 +32,45 @@ const C = {
   redBg: "#FDE7E5",
   gold: "#A15C07",
   goldBg: "#FEF0D7",
+  headerBody: "#D9D2F5",
 };
+
+/** The palette the renderer draws with — BASE_C, or BASE_C re-coloured to the active theme. */
+const C: typeof BASE_C = { ...BASE_C };
+
+/**
+ * Maps the active storefront theme (Admin → Theme) onto the invoice design, role for role:
+ * ink header, primary highlights, soft tints, secondary wave. With the default theme the
+ * reference palette is used unchanged, so the current invoice looks exactly as designed.
+ * Status colours (paid / failed / refunded) stay fixed for legibility.
+ * Returns the four accent choices re-derived from the theme, or null for the reference accents.
+ */
+function applyInvoiceTheme(): Record<InvoiceAccentKey, InvoiceAccent> | null {
+  Object.assign(C, BASE_C);
+  const t = getActiveThemeColorsSync();
+  if (!t) return null;
+  Object.assign(C, {
+    ink: t.ink,
+    inkSoft: mixHex(t.ink, "#ffffff", 0.08),
+    violet: t.primary,
+    violetSoft: t.accent,
+    lilacBg: mixHex(t.accent, "#ffffff", 0.5),
+    lilacText: mixHex(t.primary, "#ffffff", 0.6),
+    peach: t.secondary,
+    peachSoft: t.blush,
+    text: t.foreground,
+    muted: t.mutedForeground,
+    faint: mixHex(t.mutedForeground, t.background, 0.45),
+    border: t.border,
+    headerBody: mixHex(t.primary, "#ffffff", 0.78),
+  });
+  return themeInvoiceAccents(t);
+}
 
 /** Accent palettes selectable on the Invoice Settings page. */
 const ACCENTS = {
-  peach: { label: "#F28A63", wave: "#FF9E7A", soft: C.violetSoft, strong: C.violet },
-  violet: { label: "#6D4AFF", wave: "#B9A8FF", soft: C.violetSoft, strong: "#6D4AFF" },
+  peach: { label: "#F28A63", wave: "#FF9E7A", soft: BASE_C.violetSoft, strong: BASE_C.violet },
+  violet: { label: "#6D4AFF", wave: "#B9A8FF", soft: BASE_C.violetSoft, strong: "#6D4AFF" },
   rose: { label: "#D9546F", wave: "#F2A0B1", soft: "#FCE9EE", strong: "#C23B59" },
   teal: { label: "#0E8C80", wave: "#5CC5B9", soft: "#E1F4F1", strong: "#0E7C72" },
 } as const;
@@ -210,11 +245,14 @@ export async function renderInvoicePdf(
   const light = b.headerStyle === "light";
   const whiteLogo = light ? null : await whiteLogoBuffer();
   const logo = whiteLogo ? null : await fetchLogoBuffer(light ? null : b.logoUrl);
-  const A = ACCENTS[b.accent ?? "peach"] ?? ACCENTS.peach;
+  // The admin's accent choice always applies — re-coloured to the active theme when one is live
+  const themeAccents = applyInvoiceTheme();
+  const key = (b.accent ?? "peach") as InvoiceAccentKey;
+  const A = themeAccents ? themeAccents[key] ?? themeAccents.peach : ACCENTS[key] ?? ACCENTS.peach;
   // Header band colours for the dark (ink) or light (lilac) style
   const HB = light
     ? { bg: C.lilacBg, title: C.ink, sub: C.muted, body: C.muted, number: C.ink, ring: A.strong }
-    : { bg: C.ink, title: C.white, sub: C.lilacText, body: "#D9D2F5", number: C.white, ring: C.violet };
+    : { bg: C.ink, title: C.white, sub: C.lilacText, body: C.headerBody, number: C.white, ring: C.violet };
   const show = {
     hsn: b.showHsn !== false,
     gstSummary: b.showGstSummary !== false,

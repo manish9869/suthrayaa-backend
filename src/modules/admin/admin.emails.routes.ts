@@ -2,15 +2,19 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { substituteTemplate, resendLoggedEmail, renderFinalEmailHtml, renderOrderDetailsHtml, renderAddressHtml } from "../email/email.service.js";
+import { applyStorefrontTheme } from "../email/theme.js";
 
 export const adminEmailTemplatesRouter = Router();
 export const adminEmailLogsRouter = Router();
 for (const r of [adminEmailTemplatesRouter, adminEmailLogsRouter]) r.use(authenticate, requireAdmin);
+adminEmailTemplatesRouter.use(auditWrites("email_templates", "EMAIL_TEMPLATE", { "/:id/preview": null, "/:id/test-send": "EMAIL_SENT" }));
+adminEmailLogsRouter.use(auditWrites("email_logs", "EMAIL", { "/:id/retry": "EMAIL_SENT" }));
 
 const SAMPLE_VARIABLES: Record<string, string> = {
   customer_name: "Priya Sharma",
@@ -151,7 +155,8 @@ adminEmailTemplatesRouter.post("/:id/preview", requirePermission("emails.view"),
     if (!template) throw HttpError.notFound("Template not found");
     res.json({
       subject: substituteTemplate(template.subject, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS),
-      bodyHtml: substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS),
+      // Same recolouring as real sends, so the preview matches the active storefront theme
+      bodyHtml: applyStorefrontTheme(substituteTemplate(template.body_html, SAMPLE_VARIABLES, SAMPLE_RAW, SAMPLE_LISTS)),
     });
   } catch (err) {
     next(err);

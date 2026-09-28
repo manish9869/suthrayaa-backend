@@ -2,13 +2,32 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 
 export const adminReviewsRouter = Router();
-adminReviewsRouter.use(authenticate, requireAdmin);
+adminReviewsRouter.use(authenticate, requireAdmin, auditWrites("reviews", "REVIEW"));
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function toAdminReviewDTO(row: any) {
+  return {
+    id: row.id,
+    productId: row.product_id,
+    productName: row.products?.name ?? null,
+    productSlug: row.products?.slug ?? null,
+    customerName: row.customer_name,
+    rating: row.rating,
+    title: row.title ?? "",
+    content: row.content,
+    images: row.images ?? [],
+    verified: row.is_verified_purchase,
+    isPublished: row.is_published,
+    createdAt: row.created_at,
+  };
+}
 
 adminReviewsRouter.get("/", requirePermission("reviews.view"), async (req, res, next) => {
   try {
@@ -18,7 +37,7 @@ adminReviewsRouter.get("/", requirePermission("reviews.view"), async (req, res, 
     if (status === "published") query = query.eq("is_published", true);
     const { data, error } = await query;
     if (error) throw HttpError.internal(error.message);
-    res.json(data ?? []);
+    res.json((data ?? []).map(toAdminReviewDTO));
   } catch (err) {
     next(err);
   }
@@ -33,11 +52,11 @@ adminReviewsRouter.patch("/:id", requirePermission("reviews.update"), validate(m
       .from("reviews")
       .update({ is_published: isPublished })
       .eq("id", req.params.id)
-      .select("*")
+      .select("*, products(name, slug)")
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Review not found");
-    res.json(data);
+    res.json(toAdminReviewDTO(data));
   } catch (err) {
     next(err);
   }

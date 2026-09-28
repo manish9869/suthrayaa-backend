@@ -3,15 +3,18 @@ import { z } from "zod";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { authenticate } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
-import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
+import { checkoutLimiter, sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { HttpError } from "../../lib/httpError.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
-import { createPaymentForExistingOrder } from "../checkout/checkout.service.js";
+import { createPaymentForExistingOrder, restoreOrderStock } from "../checkout/checkout.service.js";
+import { RETURN_REASONS, cancelReturnRequest, createReturnRequest, loadReturnContext, returnEligibility, toReturnDTO } from "../returns/returns.service.js";
+import { getSetting, getSettingSync } from "../settings/settings.service.js";
 import { buildOrderEmailData } from "../admin/admin.orders.routes.js";
 import { sendTemplatedEmail, storeLinkVariables } from "../email/email.service.js";
 import { env } from "../../config/env.js";
+import { background } from "../../lib/background.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -260,7 +263,7 @@ function toOrderSummaryDTO(o: any) {
     previewItems: items.slice(0, 4).map((i: any) => ({ name: i.product_name_snapshot, image: i.product_image_snapshot ?? null })),
     placedAt: o.placed_at,
     createdAt: o.created_at,
-    canCancel: CANCELLABLE.includes(o.status),
+    canCancel: CANCELLABLE.includes(o.status) && getSettingSync<boolean>("order.allow_cancellation") !== false,
     canPay: o.status === "pending_payment" && o.payment_method === "razorpay" && o.payment_status !== "paid",
   };
 }
@@ -284,6 +287,7 @@ function toOrderDetailDTO(o: any, invoiceNumber: string | null) {
     giftMessage: o.gift_message,
     trackingNumber: o.tracking_number ?? null,
     courier: o.courier ?? null,
+    trackingUrl: o.tracking_url ?? null,
     paymentReference: o.razorpay_payment_id ?? null,
     invoiceNumber,
     invoiceAvailable: Boolean(invoiceNumber) || (o.status !== "pending_payment" && o.status !== "cancelled") || o.payment_status === "paid",
@@ -342,8 +346,18 @@ meRouter.get("/orders", async (req, res, next) => {
 meRouter.get("/orders/:id", async (req, res, next) => {
   try {
     const order = await loadOwnOrder(req.params.id, req.user!.id);
-    const invoice = await getInvoiceForOrder(order.id);
-    res.json(toOrderDetailDTO(order, invoice?.invoice_number ?? null));
+    const [invoice, returnCtx] = await Promise.all([getInvoiceForOrder(order.id), loadReturnContext(order.id)]);
+    const eligibility = await returnEligibility(order, returnCtx);
+    res.json({
+      ...toOrderDetailDTO(order, invoice?.invoice_number ?? null),
+      returns: {
+        canRequest: eligibility.eligible,
+        blockedReason: eligibility.reason ?? null,
+        deadline: eligibility.deadline,
+        items: eligibility.items,
+        requests: returnCtx.requests.map((r: any) => toReturnDTO(r, returnCtx.items)),
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -377,36 +391,39 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
   try {
     const { reason } = req.body as z.infer<typeof cancelSchema>;
     const order = await loadOwnOrder(req.params.id, req.user!.id);
+    if (!(await getSetting<boolean>("order.allow_cancellation"))) {
+      throw HttpError.badRequest("Orders can’t be cancelled online right now — please contact us");
+    }
     if (!CANCELLABLE.includes(order.status)) {
       throw HttpError.badRequest("This order is already being made and can't be cancelled online — please contact us");
     }
-    const { error } = await supabaseAdmin
+    // Conditional on the status still being cancellable — of two concurrent cancels (or a
+    // cancel racing an admin moving the order into making) only one wins.
+    const { data: claimed, error } = await supabaseAdmin
       .from("orders")
       .update({ status: "cancelled", updated_at: new Date().toISOString() })
       .eq("id", order.id)
-      .in("status", CANCELLABLE);
+      .in("status", CANCELLABLE)
+      .select("id");
     if (error) throw HttpError.internal(error.message);
+    if (!claimed?.length) throw HttpError.conflict("This order was just updated — please refresh and try again");
     await supabaseAdmin.from("order_status_history").insert({
       order_id: order.id,
       status: "cancelled",
-      note: `Cancelled by customer${reason ? `: ${reason}` : ""}`,
+      note: `Cancelled by customer${reason ? `: ${reason}` : ""}${order.payment_status === "paid" ? " — refund required" : ""}`,
     });
 
-    // Return reserved stock (COD reserves at placement, online orders once paid)
-    if (order.payment_method === "cod" || order.payment_status === "paid") {
-      for (const item of order.order_items ?? []) {
-        if (item.product_id) await supabaseAdmin.rpc("increment_product_stock", { p_product_id: item.product_id, p_qty: item.quantity });
-      }
-    }
+    // Returns stock only if this order is holding some (COD from placement, online once paid)
+    await restoreOrderStock(order.id);
 
     const fresh = await loadOwnOrder(order.id, req.user!.id);
     const to = fresh.guest_email ?? fresh.shipping_address?.email ?? req.user!.email;
     if (to) {
       const { variables, listVariables, rawVariables } = buildOrderEmailData(fresh);
-      sendTemplatedEmail({ type: "order_cancelled", to, variables, rawVariables, listVariables, relatedOrderId: fresh.id }).catch(() => {});
+      background(sendTemplatedEmail({ type: "order_cancelled", to, variables, rawVariables, listVariables, relatedOrderId: fresh.id }).catch(() => {}));
     }
     if (env.ADMIN_NOTIFICATION_EMAIL) {
-      sendTemplatedEmail({
+      background(sendTemplatedEmail({
         type: "admin_new_enquiry",
         to: env.ADMIN_NOTIFICATION_EMAIL,
         variables: {
@@ -418,7 +435,7 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
           enquiry_message: `<strong>Order ${fresh.order_number} was cancelled by the customer.</strong>${reason ? `<br/><br/>Reason: ${reason.replace(/[<>&]/g, "")}` : ""}${fresh.payment_status === "paid" ? "<br/><br/>This order was paid online — please process the refund." : ""}`,
         },
         relatedOrderId: fresh.id,
-      }).catch(() => {});
+      }).catch(() => {}));
     }
 
     const invoice = await getInvoiceForOrder(fresh.id);
@@ -428,8 +445,37 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
   }
 });
 
+// ---- Returns & exchanges ----
+
+const returnSchema = z.object({
+  type: z.enum(["return", "exchange"]),
+  reason: z.enum(RETURN_REASONS),
+  details: z.string().trim().max(1000).optional(),
+  items: z.array(z.object({ orderItemId: z.string().uuid(), quantity: z.number().int().min(1).max(100) })).min(1).max(50),
+});
+
+meRouter.post("/orders/:id/returns", sensitiveLimiter, validate(returnSchema), async (req, res, next) => {
+  try {
+    const order = await loadOwnOrder(req.params.id, req.user!.id);
+    const created = await createReturnRequest(order, req.user!.id, req.body as z.infer<typeof returnSchema>);
+    const { items } = await loadReturnContext(order.id);
+    res.status(201).json(toReturnDTO(created, items));
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.post("/returns/:id/cancel", sensitiveLimiter, async (req, res, next) => {
+  try {
+    const cancelled = await cancelReturnRequest(req.params.id, req.user!.id);
+    res.json(toReturnDTO(cancelled));
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** Starts a new online payment for an order still awaiting payment. */
-meRouter.post("/orders/:id/pay", sensitiveLimiter, async (req, res, next) => {
+meRouter.post("/orders/:id/pay", checkoutLimiter, async (req, res, next) => {
   try {
     const { order, razorpayOrder } = await createPaymentForExistingOrder(req.params.id, req.user!.id);
     res.json({
@@ -451,6 +497,27 @@ meRouter.get("/wishlist", async (req, res, next) => {
       .eq("customer_id", req.user!.id);
     if (error) throw HttpError.internal(error.message);
     res.json((data ?? []).map((w: any) => (w.products ? toProductDTO(w.products) : null)).filter(Boolean));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Replaces the whole wishlist (used by the storefront's sync after sign-in / on change). */
+meRouter.put("/wishlist", validate(z.object({ productIds: z.array(z.string().uuid()).max(200) })), async (req, res, next) => {
+  try {
+    const productIds = [...new Set((req.body as { productIds: string[] }).productIds)];
+    const { error: delErr } = await supabaseAdmin.from("wishlist_items").delete().eq("customer_id", req.user!.id);
+    if (delErr) throw HttpError.internal(delErr.message);
+    if (productIds.length) {
+      // Skip ids for products that no longer exist, rather than failing the whole sync on an FK error
+      const { data: existing } = await supabaseAdmin.from("products").select("id").in("id", productIds);
+      const valid = (existing ?? []).map((p) => p.id);
+      if (valid.length) {
+        const { error } = await supabaseAdmin.from("wishlist_items").insert(valid.map((id) => ({ customer_id: req.user!.id, product_id: id })));
+        if (error) throw HttpError.internal(error.message);
+      }
+    }
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
@@ -501,6 +568,7 @@ function resolveCartCustomizations(product: any, selections: any[]) {
       const value = group.values.find((v: any) => v.id === s.valueId);
       return {
         customizationId: group.id,
+        valueId: value?.id,
         label: group.label,
         valueLabel: value?.label,
         textValue: s.textValue,
@@ -552,16 +620,45 @@ const cartSyncSchema = z.object({
         )
         .optional(),
     })
-  ),
+  ).max(100),
+  /** "merge" (default): additive union into the server cart — for folding a guest cart in once.
+   * "replace": the server cart becomes exactly `items` — for ongoing sync of a signed-in cart. */
+  mode: z.enum(["merge", "replace"]).optional(),
 });
 
 // Merges the client's (possibly guest) cart into the server cart — additive union keyed on
-// product+color+customText, mirroring the key logic in the frontend's Zustand cart store.
+// product+color+customText, mirroring the key logic in the frontend's Zustand cart store —
+// or, with mode "replace", overwrites it.
 meRouter.put("/cart", validate(cartSyncSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof cartSyncSchema>;
 
-    for (const item of body.items) {
+    if (body.mode === "replace") {
+      const { error: delErr } = await supabaseAdmin.from("cart_items").delete().eq("customer_id", req.user!.id);
+      if (delErr) throw HttpError.internal(delErr.message);
+      // Collapse duplicate lines client-side bugs could send, so the unique index can't reject the insert
+      const lines = new Map<string, (typeof body.items)[number]>();
+      for (const item of body.items) {
+        const key = [item.productId, item.selectedColor ?? "", item.customText ?? "", JSON.stringify(item.customizations ?? [])].join("|");
+        const prev = lines.get(key);
+        lines.set(key, prev ? { ...prev, quantity: Math.min(20, prev.quantity + item.quantity) } : item);
+      }
+      if (lines.size) {
+        const { error: insErr } = await supabaseAdmin.from("cart_items").insert(
+          [...lines.values()].map((item) => ({
+            customer_id: req.user!.id,
+            product_id: item.productId,
+            quantity: item.quantity,
+            selected_color_hex: item.selectedColor ?? "",
+            custom_text: item.customText ?? "",
+            customizations: item.customizations ?? [],
+          }))
+        );
+        if (insErr) throw HttpError.internal(insErr.message);
+      }
+    }
+
+    for (const item of body.mode === "replace" ? [] : body.items) {
       const colorKey = item.selectedColor ?? "";
       const textKey = item.customText ?? "";
       const customizations = item.customizations ?? [];

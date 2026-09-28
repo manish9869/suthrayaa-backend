@@ -24,7 +24,7 @@
 </style>
 </head>
 <body style="margin:0;padding:0;background:#F4F1FB;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">Your refund of {{order_total}} is on its way back to you.&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">Your refund of {{#if refund_amount}}{{refund_amount}}{{else}}{{order_total}}{{/if}} is on its way back to you.&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F4F1FB" style="background:#F4F1FB;">
 <tr><td align="center" style="padding:28px 12px 36px;">
   <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#FFFFFF;border-radius:24px;overflow:hidden;border:1px solid #EBE6F5;">
@@ -53,7 +53,7 @@
         <td valign="middle" style="font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;color:#1C1642;">Refund details</td></tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr>
         <td style="padding:9px 0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Refund amount</td>
-        <td align="right" style="padding:9px 0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:800;color:#1C1642;">{{order_total}}</td>
+        <td align="right" style="padding:9px 0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:800;color:#1C1642;">{{#if refund_amount}}{{refund_amount}}{{else}}{{order_total}}{{/if}}</td>
       </tr><tr>
         <td style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Order</td>
         <td align="right" style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:600;color:#1C1642;">{{order_number}}</td>

@@ -8,6 +8,8 @@ const envSchema = z.object({
   // Number of reverse proxies in front of the API (Render/Railway/Nginx = 1). Needed so rate
   // limits see the real client IP; 0 = trust none (don't set higher than the real hop count,
   // or clients can spoof X-Forwarded-For).
+  // "off" hides /api/docs + /api/openapi.json (e.g. if you don't want the admin API surface public)
+  API_DOCS: z.enum(["on", "off"]).default("on"),
   TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
 
   SUPABASE_URL: z.string().url(),

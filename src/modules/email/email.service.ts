@@ -4,7 +4,7 @@ import { logger } from "../../lib/logger.js";
 import { formatPrice } from "../../lib/format.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { getSettingSync } from "../settings/settings.service.js";
-import { T, SANS, SERIF, type Tone, eyebrow, h1, strip, shell } from "./theme.js";
+import { T, SANS, SERIF, type Tone, eyebrow, h1, strip, shell, applyStorefrontTheme } from "./theme.js";
 
 const transporter = isEmailConfigured
   ? nodemailer.createTransport({
@@ -124,7 +124,7 @@ export function wrapEmail(
     h1(escapeHtml(title)),
     options.highlight ? strip([{ label: options.highlight.label, value: escapeHtml(options.highlight.value), mono: true }]) : "",
   ].join("\n");
-  return shell({
+  return applyStorefrontTheme(shell({
     title,
     preheader: title,
     admin: options.admin,
@@ -137,39 +137,7 @@ export function wrapEmail(
       instagram: links.instagram_url || undefined,
       facebook: links.facebook_url || undefined,
     },
-  });
-}
-
-async function send(to: string, subject: string, html: string) {
-  if (!transporter) {
-    logger.warn({ to, subject }, "[dummy] Email not sent — GMAIL_USER/GMAIL_APP_PASSWORD not configured yet");
-    return;
-  }
-  try {
-    await transporter.sendMail({ from: `Suthrayaa <${env.GMAIL_USER}>`, to, subject, html });
-  } catch (err) {
-    logger.error({ err, to, subject }, "Failed to send email");
-  }
-}
-
-export async function sendOrderConfirmationEmail(payload: OrderEmailPayload) {
-  if (!payload.customerEmail) return;
-
-  const html = wrapEmail(
-    `Thanks for your order, ${payload.customerName.split(" ")[0]}!`,
-    `
-    <p style="margin:0 0 20px;">Your order is confirmed and being handcrafted with care.</p>
-    ${renderOrderDetailsHtml(payload)}
-    <p style="margin:26px 0 10px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${T.peachDeep};">Shipping to</p>
-    ${addressBlock(payload.shippingAddress)}
-    <p style="font-size:13px;margin-top:20px;">
-      Payment method: ${payload.paymentMethod === "cod" ? "Cash on Delivery" : "Paid online via Razorpay"}
-    </p>
-    `,
-    { badge: { label: "Order Confirmed", tone: "good" }, highlight: { label: "Order Number", value: payload.orderNumber } }
-  );
-
-  await send(payload.customerEmail, `Order Confirmed — ${payload.orderNumber}`, html);
+  }));
 }
 
 export async function sendAdminOrderNotification(payload: OrderEmailPayload) {
@@ -294,7 +262,7 @@ const EMAIL_TYPE_BADGE: Record<string, { label: string; tone: BadgeTone }> = {
  * second one. Shared by the real send path and the admin's "send test email" action so a test
  * send actually looks like the email a customer would receive. */
 export function renderFinalEmailHtml(type: string, subject: string, bodyHtml: string, orderNumber?: string): string {
-  if (/^\s*<!doctype html/i.test(bodyHtml)) return bodyHtml;
+  if (/^\s*<!doctype html/i.test(bodyHtml)) return applyStorefrontTheme(bodyHtml);
   return wrapEmail(subject, bodyHtml, {
     badge: EMAIL_TYPE_BADGE[type],
     highlight: orderNumber ? { label: "Order", value: orderNumber } : undefined,

@@ -57,7 +57,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // Sales
   ...group("Sales", "orders", "Orders", ["view", "update", "cancel", "refund", "export"]),
   ...group("Sales", "coupons", "Coupons", ["view", "create", "update", "delete"]),
-  ...group("Sales", "customers", "Customers", ["view", "update", "delete"]),
+  ...group("Sales", "customers", "Customers", ["view", "update", "delete", "export"]),
 
   // Content
   ...group("Content", "content", "Content", ["view", "create", "update", "delete"]),

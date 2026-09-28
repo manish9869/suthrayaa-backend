@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
@@ -13,7 +14,7 @@ import { HttpError } from "../../lib/httpError.js";
 // independently; there is no live link back to the template after cloning. Gated under
 // `products.*` — this is product-authoring tooling, not a distinct resource of its own.
 export const adminCustomizationTemplatesRouter = Router();
-adminCustomizationTemplatesRouter.use(authenticate, requireAdmin);
+adminCustomizationTemplatesRouter.use(authenticate, requireAdmin, auditWrites("customization_templates", "OPTION_TEMPLATE"));
 
 adminCustomizationTemplatesRouter.get("/", requirePermission("products.view"), async (_req, res, next) => {
   try {
@@ -76,6 +77,43 @@ adminCustomizationTemplatesRouter.post("/", requirePermission("products.update")
     }
 
     res.status(201).json(template);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Updates a template; `values`, when sent, replaces the whole value list. Products that already
+ * cloned the template keep their own copies (no live link — see the note at the top). */
+adminCustomizationTemplatesRouter.patch("/:id", requirePermission("products.update"), validate(templateSchema.partial()), async (req, res, next) => {
+  try {
+    const b = req.body as Partial<z.infer<typeof templateSchema>>;
+    const { data: template, error } = await supabaseAdmin
+      .from("customization_templates")
+      .update({ name: b.name, type: b.type })
+      .eq("id", req.params.id)
+      .select("*")
+      .maybeSingle();
+    if (error) throw HttpError.internal(error.message);
+    if (!template) throw HttpError.notFound("Template not found");
+
+    if (b.values) {
+      const { error: delErr } = await supabaseAdmin.from("customization_template_values").delete().eq("template_id", template.id);
+      if (delErr) throw HttpError.internal(delErr.message);
+      if (b.values.length) {
+        const { error: insErr } = await supabaseAdmin.from("customization_template_values").insert(
+          b.values.map((v, i) => ({
+            template_id: template.id,
+            label: v.label,
+            value: v.value,
+            price_adjustment: v.priceAdjustment ?? 0,
+            sort_order: i,
+          }))
+        );
+        if (insErr) throw HttpError.internal(insErr.message);
+      }
+    }
+
+    res.json(template);
   } catch (err) {
     next(err);
   }

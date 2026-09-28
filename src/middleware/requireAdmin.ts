@@ -29,12 +29,3 @@ export async function requireAdmin(req: Request, _res: Response, next: NextFunct
     next(err);
   }
 }
-
-export function requireRole(...roles: string[]) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    if (!req.admin || !roles.includes(req.admin.role)) {
-      return next(HttpError.forbidden("Insufficient admin role"));
-    }
-    next();
-  };
-}

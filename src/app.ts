@@ -14,7 +14,15 @@ const helmet: HelmetFn =
 import { env } from "./config/env.js";
 import { supabaseAdmin } from "./config/supabase.js";
 import { logger } from "./lib/logger.js";
+import { publicContentRouter, adminContentRouter } from "./modules/content/content.routes.js";
+import { authRouter } from "./modules/auth/auth.routes.js";
+import { publicThemeRouter, adminThemeRouter } from "./modules/theme/theme.routes.js";
+import { warmThemeCache } from "./modules/theme/theme.service.js";
+import { newsletterRouter, adminNewsletterRouter } from "./modules/content/newsletter.routes.js";
+import { buildOpenApiSpec, SWAGGER_UI_HTML, SWAGGER_UI_CSP } from "./docs/openapi.js";
+import { warmSettingsCache } from "./modules/settings/settings.service.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
+import { edgeCache } from "./middleware/edgeCache.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
 import { webhooksRouter } from "./modules/webhooks/webhooks.routes.js";
@@ -52,6 +60,7 @@ import { adminEmailTemplatesRouter, adminEmailLogsRouter } from "./modules/admin
 import { adminInvoiceSettingsRouter } from "./modules/admin/admin.settings.routes.js";
 import { adminSiteSettingsRouter } from "./modules/admin/admin.siteSettings.routes.js";
 import { analyticsRouter } from "./modules/analytics/analytics.routes.js";
+import { adminReturnsRouter } from "./modules/returns/admin.returns.routes.js";
 import {
   publicSettingsRouter,
   publicNavRouter,
@@ -79,6 +88,14 @@ export function createApp() {
   );
   app.use(generalLimiter);
 
+  // Keep the settings cache loaded/fresh for the synchronous getSettingSync() readers —
+  // serverless instances never run server.ts's startup code. Cheap no-op within the TTL.
+  app.use((_req, _res, next) => {
+    Promise.all([warmSettingsCache(), warmThemeCache()])
+      .catch((err) => logger.error({ err }, "Failed to load site settings / theme"))
+      .finally(() => next());
+  });
+
   // Mounted before the global JSON parser: the Razorpay webhook needs the raw request
   // body to verify its HMAC signature.
   app.use("/api/webhooks", webhooksRouter);
@@ -100,6 +117,16 @@ export function createApp() {
     });
   });
 
+  // Public, identical-for-everyone reads — cached at the CDN edge (see edgeCache)
+  app.use(
+    [
+      "/api/categories", "/api/products", "/api/colors", "/api/testimonials", "/api/hero-slides",
+      "/api/site-settings/public", "/api/nav-items", "/api/footer-links", "/api/homepage-sections",
+      "/api/content", "/api/theme", "/api/checkout/options",
+    ],
+    edgeCache()
+  );
+
   // Public catalog
   app.use("/api/categories", categoriesRouter);
   app.use("/api/products", productsRouter);
@@ -113,6 +140,10 @@ export function createApp() {
   app.use("/api/nav-items", publicNavRouter);
   app.use("/api/footer-links", publicFooterRouter);
   app.use("/api/homepage-sections", publicHomepageSectionsRouter);
+  app.use("/api/auth", authRouter);
+  app.use("/api/content", publicContentRouter);
+  app.use("/api/theme", publicThemeRouter);
+  app.use("/api/newsletter", newsletterRouter);
 
   // Customer-facing
   app.use("/api/me", meRouter);
@@ -137,10 +168,27 @@ export function createApp() {
   app.use("/api/admin/settings/invoice", adminInvoiceSettingsRouter);
   app.use("/api/admin/settings", adminSiteSettingsRouter);
   app.use("/api/admin/analytics", analyticsRouter);
+  app.use("/api/admin/returns", adminReturnsRouter);
   app.use("/api/admin/users", adminUsersRouter);
   app.use("/api/admin/roles", adminRolesRouter);
   app.use("/api/admin/permissions", adminPermissionsRouter);
   app.use("/api/admin/audit-logs", adminAuditLogsRouter);
+  app.use("/api/admin/content", adminContentRouter);
+  app.use("/api/admin/theme", adminThemeRouter);
+  app.use("/api/admin/newsletter", adminNewsletterRouter);
+
+  // API documentation — generated from this route table (see src/docs/openapi.ts)
+  if (env.API_DOCS !== "off") {
+    let spec: ReturnType<typeof buildOpenApiSpec> | null = null;
+    app.get("/api/openapi.json", (_req, res) => {
+      spec ??= buildOpenApiSpec(app);
+      res.json(spec);
+    });
+    app.get("/api/docs", (_req, res) => {
+      res.setHeader("Content-Security-Policy", SWAGGER_UI_CSP);
+      res.type("html").send(SWAGGER_UI_HTML);
+    });
+  }
 
   app.use(notFoundHandler);
   app.use(errorHandler);

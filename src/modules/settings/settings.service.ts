@@ -2,19 +2,23 @@ import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { SETTINGS, SETTINGS_BY_KEY, groupKeys, type SettingDef } from "./settings.catalog.js";
 
-// Single in-process cache, matching the RBAC work's reasoning: this backend is one Node
-// process, no Redis in this stack, and settings changes are rare admin actions — a full
-// re-read on every write (not a hot path) keeps this simple and always-correct.
+// Per-instance in-process cache (no Redis in this stack). On serverless hosting several
+// instances run side by side and an admin write only invalidates the instance that served
+// it, so entries also expire after CACHE_TTL_MS — other instances pick up changes within
+// a minute (same window as the tax-category cache).
+const CACHE_TTL_MS = 60_000;
 let cache: Map<string, unknown> | null = null;
+let cachedAt = 0;
 
 async function loadCache(): Promise<Map<string, unknown>> {
-  if (cache) return cache;
+  if (cache && Date.now() - cachedAt < CACHE_TTL_MS) return cache;
   const { data, error } = await supabaseAdmin.from("site_settings").select("key, value");
   if (error) throw error;
   const map = new Map<string, unknown>();
   for (const s of SETTINGS) map.set(s.key, s.default);
   for (const row of data ?? []) map.set(row.key, row.value);
   cache = map;
+  cachedAt = Date.now();
   return map;
 }
 
@@ -22,10 +26,9 @@ export function invalidateSettingsCache(): void {
   cache = null;
 }
 
-/** Eagerly populates the cache — call once at server startup so the very first request
- * (e.g. a price format in a log line) already reflects stored overrides, not just defaults.
- * Not required for correctness (catalog defaults are already correct India-first values),
- * just avoids a redundant lazy-load on the first real settings read. */
+/** Ensures the cache is loaded and fresh — run before each request (see app.ts) so the
+ * synchronous getSettingSync() reflects stored overrides, not just catalog defaults, even
+ * on a cold serverless instance. A no-op while the cache is within its TTL. */
 export async function warmSettingsCache(): Promise<void> {
   await loadCache();
 }
