@@ -9,6 +9,7 @@ import { HttpError } from "../../lib/httpError.js";
 import { logAudit } from "../rbac/audit.service.js";
 import { imageUpload, uploadPreviewImage } from "../storage/upload.js";
 import { loadAdminPreviewConfig, PREVIEW_MODES } from "../preview/preview.service.js";
+import { regionConfigSchema, saveRegionConfig, type RegionConfigInput } from "../preview/regions.service.js";
 
 // Admin authoring for the live color preview. Kept in its own router (mounted on the same
 // /api/admin/products prefix) so the core product routes are untouched by this feature.
@@ -80,9 +81,18 @@ adminProductPreviewRouter.put("/:id/preview", requirePermission("products.update
       .eq("id", productId);
     if (pErr) throw HttpError.internal(pErr.message);
 
-    const { error: dErr } = await supabaseAdmin.from("product_preview_layers").delete().eq("product_id", productId);
-    if (dErr) throw HttpError.internal(dErr.message);
-    if (b.layers.length > 0) {
+    // Only replace the kind of layer this mode uses (illustration zones or photo masks), so
+    // switching to "Off" or to an illustration never wipes a product's photo regions.
+    if (b.mode !== "none") {
+      const { data: existing, error: eErr } = await supabaseAdmin.from("product_preview_layers").select("id, zone, mask_url").eq("product_id", productId);
+      if (eErr) throw HttpError.internal(eErr.message);
+      const replace = (existing ?? []).filter((l: any) => (b.mode === "svg" ? l.zone != null : l.mask_url != null)).map((l: any) => l.id);
+      if (replace.length > 0) {
+        const { error: dErr } = await supabaseAdmin.from("product_preview_layers").delete().in("id", replace);
+        if (dErr) throw HttpError.internal(dErr.message);
+      }
+    }
+    if (b.mode !== "none" && b.layers.length > 0) {
       const { error: iErr } = await supabaseAdmin.from("product_preview_layers").insert(
         b.layers.map((l, i) => ({
           product_id: productId,
@@ -96,6 +106,27 @@ adminProductPreviewRouter.put("/:id/preview", requirePermission("products.update
     }
 
     await logAudit({ userId: req.admin!.id, action: "PRODUCT_UPDATED", resource: "products", resourceId: productId, permission: "products.update", metadata: { colorPreview: { mode: b.mode, layers: b.layers.length } }, req });
+    res.json(await loadAdminPreviewConfig(productId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The whole region configuration of a photo preview in one request — regions (masks),
+// groups, which colours each may use — turned into customer colour options server-side.
+adminProductPreviewRouter.put("/:id/preview/regions", requirePermission("products.update"), validate(regionConfigSchema), async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    const result = await saveRegionConfig(productId, req.body as RegionConfigInput);
+    await logAudit({
+      userId: req.admin!.id,
+      action: "PRODUCT_UPDATED",
+      resource: "products",
+      resourceId: productId,
+      permission: "products.update",
+      metadata: { colorPreviewRegions: result },
+      req,
+    });
     res.json(await loadAdminPreviewConfig(productId));
   } catch (err) {
     next(err);

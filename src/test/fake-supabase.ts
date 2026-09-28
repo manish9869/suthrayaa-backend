@@ -344,7 +344,21 @@ class Query implements PromiseLike<any> {
 
     if (this.op === "insert" || this.op === "upsert") {
       const written: Row[] = [];
-      for (const raw of this.payload as Row[]) {
+      // Like PostgREST: a multi-row write uses the union of all rows' columns, and a row that
+      // lacks one of them gets NULL there — not the column's default. (A missing `id` in a
+      // mixed batch is therefore a not-null error, exactly as in production.)
+      const payload = this.payload as Row[];
+      if (payload.length > 1) {
+        const cols = new Set(payload.flatMap((r) => Object.keys(r)));
+        for (const r of payload) {
+          for (const c of cols) {
+            if (c in r) continue;
+            if (c === "id") return { data: null, error: { code: "23502", message: `null value in column "id" of relation "${this.name}" violates not-null constraint` } };
+            r[c] = null;
+          }
+        }
+      }
+      for (const raw of payload) {
         if (this.op === "upsert") {
           const existing = t.find((r) => this.upsertConflict!.every((c) => r[c] === raw[c]));
           if (existing) {

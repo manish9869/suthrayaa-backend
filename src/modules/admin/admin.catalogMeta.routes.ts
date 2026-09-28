@@ -266,6 +266,10 @@ const colorSchema = z.object({
   hex: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
   sortOrder: z.number().int().optional(),
   isActive: z.boolean().optional(),
+  /** Colour family for filtering, e.g. "Red", "Green" (needs migration 0021). */
+  family: z.string().trim().max(40).optional().nullable(),
+  /** Yarn code / SKU (needs migration 0021). */
+  sku: z.string().trim().max(60).optional().nullable(),
 });
 
 adminColorsRouter.get("/", requirePermission("colors.view"), async (_req, res, next) => {
@@ -283,7 +287,7 @@ adminColorsRouter.post("/", requirePermission("colors.create"), validate(colorSc
     const b = req.body as z.infer<typeof colorSchema>;
     const { data, error } = await supabaseAdmin
       .from("colors")
-      .insert({ name: b.name, hex: b.hex, sort_order: b.sortOrder ?? 0, is_active: b.isActive ?? true })
+      .insert({ name: b.name, hex: b.hex, sort_order: b.sortOrder ?? 0, is_active: b.isActive ?? true, family: b.family || undefined, sku: b.sku || undefined })
       .select("*")
       .single();
     if (error) throw HttpError.internal(error.message);
@@ -314,7 +318,14 @@ adminColorsRouter.patch("/:id", requirePermission("colors.update"), validate(col
     const { data: before } = await supabaseAdmin.from("colors").select("name, hex").eq("id", req.params.id).maybeSingle();
     const { data, error } = await supabaseAdmin
       .from("colors")
-      .update({ name: b.name, hex: b.hex, sort_order: b.sortOrder, is_active: b.isActive })
+      .update({
+        name: b.name,
+        hex: b.hex,
+        sort_order: b.sortOrder,
+        is_active: b.isActive,
+        family: b.family === undefined ? undefined : b.family || null,
+        sku: b.sku === undefined ? undefined : b.sku || null,
+      })
       .eq("id", req.params.id)
       .select("*")
       .maybeSingle();

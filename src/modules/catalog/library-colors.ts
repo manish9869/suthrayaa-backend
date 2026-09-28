@@ -12,6 +12,8 @@ export interface LibraryColor {
   id: string;
   name: string;
   hex: string;
+  family?: string;
+  sortOrder: number;
 }
 
 const CACHE_TTL_MS = 60_000;
@@ -22,10 +24,13 @@ export const normalizeHex = (hex: string) => hex.trim().toLowerCase();
 
 async function load(): Promise<Map<string, LibraryColor>> {
   if (cache && Date.now() - cachedAt < CACHE_TTL_MS) return cache;
-  const { data, error } = await supabaseAdmin.from("colors").select("id, name, hex").eq("is_active", true);
+  // select * so a database without the 0021 columns (family) still loads
+  const { data, error } = await supabaseAdmin.from("colors").select("*").eq("is_active", true);
   if (error) throw error;
   const map = new Map<string, LibraryColor>();
-  for (const c of data ?? []) map.set(normalizeHex(c.hex), { id: c.id, name: c.name, hex: c.hex });
+  for (const c of data ?? []) {
+    map.set(normalizeHex(c.hex), { id: c.id, name: c.name, hex: c.hex, family: c.family ?? undefined, sortOrder: c.sort_order ?? 0 });
+  }
   cache = map;
   cachedAt = Date.now();
   return map;
@@ -47,6 +52,16 @@ export function invalidateLibraryColors(): void {
 export function isLibraryHexSync(hex: string): boolean {
   if (!cache) return true;
   return cache.has(normalizeHex(hex));
+}
+
+/** The active library colour with this hex, if any (sync; see isLibraryHexSync for cold-cache behaviour). */
+export function libraryColorByHexSync(hex: string): LibraryColor | undefined {
+  return cache?.get(normalizeHex(hex));
+}
+
+/** Every active library colour, freshly loaded, in library order. */
+export async function allLibraryColors(): Promise<LibraryColor[]> {
+  return [...(await load()).values()].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 /** Active library colours by id, freshly loaded — for admin writes. Throws 400 on any unknown/inactive id. */

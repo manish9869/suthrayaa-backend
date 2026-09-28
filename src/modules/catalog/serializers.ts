@@ -4,7 +4,13 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { isLibraryHexSync } from "./library-colors.js";
+import { isLibraryHexSync, libraryColorByHexSync } from "./library-colors.js";
+
+/** For a colour value: whether it's in the Colors library, plus its library id and family. */
+function libraryInfo(hex: string) {
+  const lib = libraryColorByHexSync(hex);
+  return { inLibrary: isLibraryHexSync(hex), colorId: lib?.id, family: lib?.family };
+}
 
 export function toCategoryDTO(row: any, productCount = 0) {
   return {
@@ -42,7 +48,7 @@ export function getEffectivePrice(row: any): number {
 }
 
 export function toColorDTO(row: any) {
-  return { id: row.id, name: row.name, hex: row.hex };
+  return { id: row.id, name: row.name, hex: row.hex, family: row.family ?? undefined };
 }
 
 export function toTestimonialDTO(row: any) {
@@ -120,7 +126,7 @@ function toProductCustomizationDTO(row: any, includeDisabled: boolean) {
       priceAdjustment: Number(v.price_adjustment ?? 0),
       enabled: v.enabled,
       sku: v.sku ?? undefined,
-      ...(isColor ? { inLibrary: isLibraryHexSync(v.value) } : {}),
+      ...(isColor ? libraryInfo(v.value) : {}),
     }));
 
   return {
