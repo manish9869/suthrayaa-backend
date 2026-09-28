@@ -74,7 +74,7 @@ async function upload(bucket: string, folder: string, path: string): Promise<str
 async function attachProducts() {
   const { data: products, error } = await supabaseAdmin
     .from("products")
-    .select("id, name, categories(name, slug), product_images(id, url)");
+    .select("id, name, categories!products_category_id_fkey(name, slug), product_images(id, url)");
   if (error) throw error;
 
   for (const p of products ?? []) {
