@@ -32,7 +32,8 @@
     "docs:openapi": "tsx scripts/generate-openapi.ts",
     "reset:test-data": "tsx scripts/reset-test-data.ts",
     "seed:production-content": "tsx scripts/seed-production-content.ts",
-    "upload:site-media": "tsx scripts/upload-site-media.ts"
+    "upload:site-media": "tsx scripts/upload-site-media.ts",
+    "seed:demo-products": "tsx scripts/seed-demo-products.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
