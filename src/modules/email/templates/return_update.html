@@ -1,4 +1,4 @@
-<!-- SUBJECT: Your refund for {{order_number}} has been processed -->
+<!-- SUBJECT: {{return_subject}} -->
 <!doctype html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -7,7 +7,7 @@
 <meta name="x-apple-disable-message-reformatting"/>
 <meta name="color-scheme" content="light"/>
 <meta name="supported-color-schemes" content="light"/>
-<title>Refund processed</title>
+<title>Your return</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&amp;family=Plus+Jakarta+Sans:wght@400;600;700;800&amp;display=swap" rel="stylesheet"/>
 <style>
   body{margin:0;padding:0;background:#F4F1FB;-webkit-text-size-adjust:100%;}
@@ -24,7 +24,7 @@
 </style>
 </head>
 <body style="margin:0;padding:0;background:#F4F1FB;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">Your refund of {{#if refund_amount}}{{refund_amount}}{{else}}{{order_total}}{{/if}} is on its way back to you.&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">{{return_headline}} — order {{order_number}}.&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F4F1FB" style="background:#F4F1FB;">
 <tr><td align="center" style="padding:28px 12px 36px;">
   <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#FFFFFF;border-radius:24px;overflow:hidden;border:1px solid #EBE6F5;">
@@ -43,32 +43,34 @@
     <!-- body -->
     <tr><td class="px" style="padding:34px 36px 36px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;"><tr>
-      <td style="background:#FEF3DC;border-radius:999px;padding:6px 13px 6px 11px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#A15C07;">
-        <span style="display:inline-block;width:7px;height:7px;border-radius:7px;background:#A15C07;vertical-align:1px;margin-right:7px;"></span>Refund processed
+      <td style="background:#EFEAFF;border-radius:999px;padding:6px 13px 6px 11px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#6D4AFF;">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:7px;background:#6D4AFF;vertical-align:1px;margin-right:7px;"></span>{{return_label}}
       </td></tr></table>
-<h1 class="h1" style="margin:0 0 12px;font-family:'Fraunces', Georgia, 'Times New Roman', serif;font-weight:500;font-size:30px;line-height:1.2;letter-spacing:-0.4px;color:#1C1642;">Your refund is on its way</h1>
-<p style="margin:0px 0 14px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:15px;line-height:1.65;color:#6B6485;">Hi {{customer_name}}, we've processed the refund for your order. It's been sent back to your original payment method.</p>
+<h1 class="h1" style="margin:0 0 12px;font-family:'Fraunces', Georgia, 'Times New Roman', serif;font-weight:500;font-size:30px;line-height:1.2;letter-spacing:-0.4px;color:#1C1642;">{{return_headline}}</h1>
+<p style="margin:0px 0 14px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:15px;line-height:1.65;color:#6B6485;">Hi {{customer_name}}, {{return_message}}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;background:#FFFFFF;border:1px solid #EBE6F5;border-radius:16px;"><tr><td style="padding:18px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px;"><tr>
-        <td valign="middle" style="padding-right:10px;"><div style="width:30px;height:30px;line-height:30px;border-radius:10px;background:#FEF3DC;color:#A15C07;text-align:center;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;">&#8377;</div></td>
-        <td valign="middle" style="font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;color:#1C1642;">Refund details</td></tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <td valign="middle" style="font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;color:#1C1642;">Request details</td></tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr>
-        <td style="padding:9px 0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Refund amount</td>
-        <td align="right" style="padding:9px 0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:800;color:#1C1642;">{{#if refund_amount}}{{refund_amount}}{{else}}{{order_total}}{{/if}}</td>
+        <td style="padding:9px 0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Order</td>
+        <td align="right" style="padding:9px 0;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:600;color:#1C1642;">{{order_number}}</td>
       </tr><tr>
-        <td style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Order</td>
-        <td align="right" style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:600;color:#1C1642;">{{order_number}}</td>
+        <td style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Request</td>
+        <td align="right" style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:600;color:#1C1642;">{{return_type}}</td>
+      </tr><tr>
+        <td style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Items</td>
+        <td align="right" style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:600;color:#1C1642;">{{return_items}}</td>
       </tr><tr>
         <td style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;color:#6B6485;">Status</td>
-        <td align="right" style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:600;color:#15803D;">&#10003; Processed</td>
+        <td align="right" style="padding:9px 0;border-top:1px solid #EBE6F5;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:800;color:#1C1642;">{{return_status}}</td>
       </tr>
   </table></td></tr></table>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;"><tr>
-    <td style="background:#EFEAFF;border-radius:14px;padding:14px 18px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:13.5px;line-height:1.6;color:#6D4AFF;">Depending on your bank or payment provider, it usually takes 5–7 business days to appear in your account.</td></tr></table>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 4px;"><tr><td style="padding-right:0px;padding-bottom:8px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0;"><tr>
+{{#if admin_note}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;"><tr>
+    <td style="background:#FEF3DC;border-radius:14px;padding:14px 18px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:13.5px;line-height:1.6;color:#A15C07;"><strong>Note from us:</strong> {{admin_note}}</td></tr></table>{{/if}}
+{{#if order_url}}<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 4px;"><tr><td style="padding-right:0px;padding-bottom:8px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0;"><tr>
     <td align="center" bgcolor="#6D4AFF" style="border-radius:999px;">
-      <a href="{{store_url}}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:999px;">Browse the shop&nbsp;&nbsp;&rarr;</a>
-    </td></tr></table></td></tr></table>
-<p style="margin:26px 0 0px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:13.5px;line-height:1.65;color:#6B6485;">Questions about your refund? Just reply to this email or <a href="{{contact_url}}" target="_blank" style="color:#6D4AFF;font-weight:700;text-decoration:none;">contact us</a> — a real person on our team reads every message.</p>
+      <a href="{{order_url}}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:999px;">View your order&nbsp;&nbsp;&rarr;</a>
+    </td></tr></table></td></tr></table>{{/if}}
+<p style="margin:26px 0 0px;font-family:'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif;font-size:13.5px;line-height:1.65;color:#6B6485;">Questions about your return? Just reply to this email or <a href="{{contact_url}}" target="_blank" style="color:#6D4AFF;font-weight:700;text-decoration:none;">contact us</a> — a real person on our team reads every message.</p>
     </td></tr>
     <!-- sign-off strip -->
     <tr><td class="px" style="padding:0 36px 30px;">

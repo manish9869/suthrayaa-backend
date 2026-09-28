@@ -1,7 +1,7 @@
 -- ============================================================================
 -- Suthrayaa — FINAL consolidated database script
 -- ----------------------------------------------------------------------------
--- Single-file equivalent of supabase/migrations/0001 … 0016 applied in order:
+-- Single-file equivalent of supabase/migrations/0001 … 0018 applied in order:
 -- full schema (tables, constraints, indexes, functions, triggers, views, RLS
 -- policies) plus the reference/seed data those migrations insert (category
 -- taxonomy, email templates, homepage sections, invoice settings, default
@@ -2136,5 +2136,96 @@ $$;
 create index if not exists idx_orders_placed on orders(placed_at);
 create index if not exists idx_orders_status on orders(status);
 create index if not exists idx_customer_profiles_created on customer_profiles(created_at);
+
+-- ============================================================================
+-- 0017_admin_list_queries.sql
+-- ============================================================================
+
+-- Server-side search / filter / sort for the admin Orders and Customers lists (they used to
+-- load 300 rows and filter in the browser, silently missing everything older). Additive.
+
+-- "Custom order" = any line with personalization. Kept on the order so it can be filtered in
+-- the database instead of by scanning order_items JSON.
+alter table orders add column if not exists is_custom boolean not null default false;
+update orders o set is_custom = true
+where exists (
+  select 1 from order_items i
+  where i.order_id = o.id
+    and (coalesce(jsonb_array_length(i.customizations), 0) > 0 or coalesce(i.custom_text, '') <> '')
+);
+create index if not exists idx_orders_is_custom on orders(is_custom) where is_custom;
+create index if not exists idx_orders_total on orders(total);
+
+-- One row per customer with their order stats, so the list can sort and filter on spend.
+-- security_invoker: the view runs with the caller's rights, so RLS on orders/customer_profiles
+-- still applies — anon/authenticated clients get nothing; only the backend's service role reads it.
+create or replace view public.admin_customer_stats
+with (security_invoker = true) as
+select
+  cp.id,
+  cp.email,
+  cp.phone,
+  cp.first_name,
+  cp.last_name,
+  cp.marketing_opt_in,
+  cp.created_at,
+  coalesce(s.order_count, 0)::int as order_count,
+  coalesce(s.total_spent, 0)::numeric(12,2) as total_spent,
+  s.last_order_at
+from customer_profiles cp
+left join lateral (
+  select
+    count(*) filter (where o.payment_status in ('paid', 'partially_refunded', 'refunded')) as order_count,
+    sum(o.total - o.refunded_amount) filter (where o.payment_status in ('paid', 'partially_refunded', 'refunded')) as total_spent,
+    max(o.placed_at) as last_order_at
+  from orders o
+  where o.customer_id = cp.id
+) s on true
+where not exists (select 1 from admin_users a where a.id = cp.id);
+
+revoke all on public.admin_customer_stats from anon, authenticated;
+
+-- ============================================================================
+-- 0018_returns_tracking.sql
+-- ============================================================================
+
+-- Courier tracking links and customer return / exchange requests. Additive.
+
+-- A link the customer can open to follow the parcel — pasted by the admin from the courier
+-- alongside the tracking number.
+alter table orders add column if not exists tracking_url text;
+
+-- One request per return/exchange. Money moves through the existing refund ledger
+-- (order_refunds); `refund_id` links the refund that settled a return.
+create table if not exists return_requests (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references orders(id) on delete cascade,
+  customer_id uuid references auth.users(id) on delete set null,
+  type text not null check (type in ('return', 'exchange')),
+  status text not null default 'requested'
+    check (status in ('requested', 'approved', 'rejected', 'received', 'refunded', 'exchanged', 'cancelled')),
+  reason text not null check (reason in ('damaged', 'defective', 'wrong_item', 'not_as_described', 'changed_mind', 'size_or_fit', 'other')),
+  details text,
+  -- [{ orderItemId, quantity }] — which lines (and how many of each) are coming back
+  items jsonb not null default '[]',
+  admin_note text,
+  refund_id uuid references order_refunds(id) on delete set null,
+  resolved_by uuid references admin_users(id) on delete set null,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_return_requests_order on return_requests(order_id);
+create index if not exists idx_return_requests_status on return_requests(status, created_at desc);
+-- At most one open request per order (a closed one can be followed by a new request)
+create unique index if not exists return_requests_one_open_per_order
+  on return_requests(order_id) where status in ('requested', 'approved', 'received');
+
+drop trigger if exists set_return_requests_updated_at on return_requests;
+create trigger set_return_requests_updated_at before update on return_requests
+  for each row execute function public.set_updated_at();
+
+-- Service-role (Express backend) only, like the rest of the order tables
+alter table return_requests enable row level security;
 
 commit;

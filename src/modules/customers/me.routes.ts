@@ -9,6 +9,8 @@ import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
 import { createInvoiceForOrder, getInvoiceForOrder, renderInvoicePdf } from "../invoices/invoice.service.js";
 import { createPaymentForExistingOrder, restoreOrderStock } from "../checkout/checkout.service.js";
+import { RETURN_REASONS, cancelReturnRequest, createReturnRequest, loadReturnContext, returnEligibility, toReturnDTO } from "../returns/returns.service.js";
+import { getSetting, getSettingSync } from "../settings/settings.service.js";
 import { buildOrderEmailData } from "../admin/admin.orders.routes.js";
 import { sendTemplatedEmail, storeLinkVariables } from "../email/email.service.js";
 import { env } from "../../config/env.js";
@@ -261,7 +263,7 @@ function toOrderSummaryDTO(o: any) {
     previewItems: items.slice(0, 4).map((i: any) => ({ name: i.product_name_snapshot, image: i.product_image_snapshot ?? null })),
     placedAt: o.placed_at,
     createdAt: o.created_at,
-    canCancel: CANCELLABLE.includes(o.status),
+    canCancel: CANCELLABLE.includes(o.status) && getSettingSync<boolean>("order.allow_cancellation") !== false,
     canPay: o.status === "pending_payment" && o.payment_method === "razorpay" && o.payment_status !== "paid",
   };
 }
@@ -285,6 +287,7 @@ function toOrderDetailDTO(o: any, invoiceNumber: string | null) {
     giftMessage: o.gift_message,
     trackingNumber: o.tracking_number ?? null,
     courier: o.courier ?? null,
+    trackingUrl: o.tracking_url ?? null,
     paymentReference: o.razorpay_payment_id ?? null,
     invoiceNumber,
     invoiceAvailable: Boolean(invoiceNumber) || (o.status !== "pending_payment" && o.status !== "cancelled") || o.payment_status === "paid",
@@ -343,8 +346,18 @@ meRouter.get("/orders", async (req, res, next) => {
 meRouter.get("/orders/:id", async (req, res, next) => {
   try {
     const order = await loadOwnOrder(req.params.id, req.user!.id);
-    const invoice = await getInvoiceForOrder(order.id);
-    res.json(toOrderDetailDTO(order, invoice?.invoice_number ?? null));
+    const [invoice, returnCtx] = await Promise.all([getInvoiceForOrder(order.id), loadReturnContext(order.id)]);
+    const eligibility = await returnEligibility(order, returnCtx);
+    res.json({
+      ...toOrderDetailDTO(order, invoice?.invoice_number ?? null),
+      returns: {
+        canRequest: eligibility.eligible,
+        blockedReason: eligibility.reason ?? null,
+        deadline: eligibility.deadline,
+        items: eligibility.items,
+        requests: returnCtx.requests.map((r: any) => toReturnDTO(r, returnCtx.items)),
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -378,6 +391,9 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
   try {
     const { reason } = req.body as z.infer<typeof cancelSchema>;
     const order = await loadOwnOrder(req.params.id, req.user!.id);
+    if (!(await getSetting<boolean>("order.allow_cancellation"))) {
+      throw HttpError.badRequest("Orders can’t be cancelled online right now — please contact us");
+    }
     if (!CANCELLABLE.includes(order.status)) {
       throw HttpError.badRequest("This order is already being made and can't be cancelled online — please contact us");
     }
@@ -424,6 +440,35 @@ meRouter.post("/orders/:id/cancel", sensitiveLimiter, validate(cancelSchema), as
 
     const invoice = await getInvoiceForOrder(fresh.id);
     res.json(toOrderDetailDTO(fresh, invoice?.invoice_number ?? null));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Returns & exchanges ----
+
+const returnSchema = z.object({
+  type: z.enum(["return", "exchange"]),
+  reason: z.enum(RETURN_REASONS),
+  details: z.string().trim().max(1000).optional(),
+  items: z.array(z.object({ orderItemId: z.string().uuid(), quantity: z.number().int().min(1).max(100) })).min(1).max(50),
+});
+
+meRouter.post("/orders/:id/returns", sensitiveLimiter, validate(returnSchema), async (req, res, next) => {
+  try {
+    const order = await loadOwnOrder(req.params.id, req.user!.id);
+    const created = await createReturnRequest(order, req.user!.id, req.body as z.infer<typeof returnSchema>);
+    const { items } = await loadReturnContext(order.id);
+    res.status(201).json(toReturnDTO(created, items));
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.post("/returns/:id/cancel", sensitiveLimiter, async (req, res, next) => {
+  try {
+    const cancelled = await cancelReturnRequest(req.params.id, req.user!.id);
+    res.json(toReturnDTO(cancelled));
   } catch (err) {
     next(err);
   }

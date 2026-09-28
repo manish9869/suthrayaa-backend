@@ -30,7 +30,27 @@ const UNIQUE: Record<string, string[][]> = {
 
 /** Column defaults the real schema applies on insert (only the ones app logic compares against). */
 const DEFAULTS: Record<string, Row> = {
-  orders: { stock_committed: false, refunded_amount: 0 },
+  orders: { stock_committed: false, refunded_amount: 0, is_custom: false },
+};
+
+/** Views, recomputed from the base tables whenever they're queried. */
+const VIEWS: Record<string, (db: FakeSupabase) => Row[]> = {
+  admin_customer_stats: (db) => {
+    const admins = new Set(db.table("admin_users").map((a) => a.id));
+    return db
+      .table("customer_profiles")
+      .filter((c) => !admins.has(c.id))
+      .map((c) => {
+        const collected = db.table("orders").filter((o) => o.customer_id === c.id && ["paid", "partially_refunded", "refunded"].includes(o.payment_status));
+        const placed = db.table("orders").filter((o) => o.customer_id === c.id && o.placed_at).map((o) => o.placed_at as string);
+        return {
+          ...c,
+          order_count: collected.length,
+          total_spent: collected.reduce((sum, o) => sum + Number(o.total) - Number(o.refunded_amount ?? 0), 0),
+          last_order_at: placed.sort().at(-1) ?? null,
+        };
+      });
+  },
 };
 
 const singular = (t: string) => (t.endsWith("ies") ? t.slice(0, -3) + "y" : t.endsWith("s") ? t.slice(0, -1) : t);
@@ -124,6 +144,7 @@ export class FakeSupabase {
   }
 
   from(name: string) {
+    if (name in VIEWS) this.tables[name] = VIEWS[name](this);
     return new Query(this, name);
   }
 
@@ -252,8 +273,22 @@ class Query implements PromiseLike<any> {
     this.filters.push((r) => re.test(String(r[col] ?? "")));
     return this;
   }
-  or() {
-    return this; // search helpers aren't exercised by these tests
+  /** `col.op.value,col.op.value` — any clause may match. Supports eq / ilike and `json->>key` columns. */
+  or(expr: string) {
+    // Shapes this double doesn't model (e.g. `col.in.(a,b)`) stay a no-op, as before
+    if (!expr.split(",").every((c) => /^([^.]+)\.(eq|ilike)\.(.*)$/.test(c))) return this;
+    const clauses = expr.split(",").map((c) => {
+      const [, col, op, raw] = /^([^.]+)\.(eq|ilike)\.(.*)$/.exec(c)!;
+      const read = (r: Row) => {
+        const [base, key] = col.split("->>");
+        return key ? r[base]?.[key] : r[base];
+      };
+      if (op === "eq") return (r: Row) => String(read(r) ?? "") === raw;
+      const re = new RegExp("^" + raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*") + "$", "i");
+      return (r: Row) => re.test(String(read(r) ?? ""));
+    });
+    this.filters.push((r) => clauses.some((f) => f(r)));
+    return this;
   }
   not() {
     return this;

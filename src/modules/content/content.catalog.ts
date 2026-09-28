@@ -11,7 +11,7 @@ import { POLICY_DEFAULTS } from "./policies.defaults.js";
  *
  * Text conventions the storefront understands:
  *   • Headings: wrap words in *asterisks* for the italic accent, e.g. "Every stitch *tells a story*"
- *   • `markdown` fields: blank line = new paragraph, "- " = bullet, **bold**, [label](/link),
+ *   • `markdown` fields: blank line = new paragraph, "- " = bullet, "1. " = numbered step, **bold**, [label](/link),
  *     and {{email}} is replaced with the store's support email.
  *   • `icon` fields take a name from CONTENT_ICONS.
  */

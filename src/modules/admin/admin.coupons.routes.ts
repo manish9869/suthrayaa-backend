@@ -2,13 +2,14 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 
 export const adminCouponsRouter = Router();
-adminCouponsRouter.use(authenticate, requireAdmin);
+adminCouponsRouter.use(authenticate, requireAdmin, auditWrites("coupons", "COUPON"));
 
 adminCouponsRouter.get("/", requirePermission("coupons.view"), async (_req, res, next) => {
   try {

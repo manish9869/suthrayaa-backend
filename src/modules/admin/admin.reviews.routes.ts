@@ -2,13 +2,14 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 
 export const adminReviewsRouter = Router();
-adminReviewsRouter.use(authenticate, requireAdmin);
+adminReviewsRouter.use(authenticate, requireAdmin, auditWrites("reviews", "REVIEW"));
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function toAdminReviewDTO(row: any) {

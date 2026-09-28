@@ -569,6 +569,7 @@ export async function placeOrder(input: PlaceOrderInput) {
       status: isCod ? "confirmed" : "pending_payment",
       gift_wrap: Boolean(input.giftWrap),
       gift_message: input.giftMessage,
+      is_custom: priced.lines.some((l) => l.customizations.length > 0 || Boolean(l.customText)),
       placed_at: isCod ? new Date().toISOString() : null,
     })
     .select("*")

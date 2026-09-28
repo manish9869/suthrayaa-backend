@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
@@ -12,6 +13,8 @@ import { applyStorefrontTheme } from "../email/theme.js";
 export const adminEmailTemplatesRouter = Router();
 export const adminEmailLogsRouter = Router();
 for (const r of [adminEmailTemplatesRouter, adminEmailLogsRouter]) r.use(authenticate, requireAdmin);
+adminEmailTemplatesRouter.use(auditWrites("email_templates", "EMAIL_TEMPLATE", { "/:id/preview": null, "/:id/test-send": "EMAIL_SENT" }));
+adminEmailLogsRouter.use(auditWrites("email_logs", "EMAIL", { "/:id/retry": "EMAIL_SENT" }));
 
 const SAMPLE_VARIABLES: Record<string, string> = {
   customer_name: "Priya Sharma",

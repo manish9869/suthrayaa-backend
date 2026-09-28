@@ -88,7 +88,7 @@ export const POLICY_DEFAULTS = {
     "sections": [
       {
         "title": "Our 7-Day Return Window",
-        "body": "You can request a return within **7 days** of delivery for eligible items. To start a return, email {{email}} or use our [Contact page](/contact) with your order number and a photo of the item — we'll take it from there."
+        "body": "You can request a return or exchange within **7 days** of delivery for eligible items. Go to [Account → Orders](/account/orders), open the order and choose **Request a return** — or email {{email}} with your order number and a photo if you checked out as a guest."
       },
       {
         "title": "What's Eligible",
@@ -100,7 +100,7 @@ export const POLICY_DEFAULTS = {
       },
       {
         "title": "How Returns Work",
-        "body": ""
+        "body": "1. **Request** — pick the items and tell us what went wrong. For damaged or defective pieces, a photo helps us sort it out faster.\n2. **Approval** — we reply within 1–2 business days. Once approved, pack the items securely and send them back to the address in the email.\n3. **Inspection** — when your parcel arrives we check it and email you.\n4. **Refund or exchange** — refunds go back to your original payment method (see our [Refund Policy](/refund-policy)); exchanges ship as soon as the replacement is ready.\n\nYou can follow every step on your order page, and withdraw a request any time before we receive the parcel."
       },
       {
         "title": "Exchanges",

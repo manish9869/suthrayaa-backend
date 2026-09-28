@@ -16,6 +16,9 @@ import { getSettingSync } from "../settings/settings.service.js";
 import { background } from "../../lib/background.js";
 import { razorpay } from "../../config/razorpay.js";
 import { restoreOrderStock } from "../checkout/checkout.service.js";
+import { loadReturnContext, settleReturnWithRefund, toReturnDTO } from "../returns/returns.service.js";
+import { fetchAll, resolveRange } from "../analytics/analytics.service.js";
+import { searchTokens, toCsv } from "../../lib/csv.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -37,43 +40,178 @@ function toAdminOrderSummary(o: any) {
     paymentMethod: o.payment_method,
     total: Number(o.total),
     itemCount: (o.order_items ?? []).reduce((s: number, i: any) => s + i.quantity, 0),
-    isCustomOrder: isCustomOrder(o),
+    isCustomOrder: o.is_custom ?? isCustomOrder(o),
     trackingNumber: o.tracking_number ?? null,
     placedAt: o.placed_at,
     createdAt: o.created_at,
   };
 }
 
+const ORDER_STATUSES = ["pending_payment", "confirmed", "in_production", "ready", "shipped", "delivered", "cancelled", "refunded", "partially_refunded"] as const;
+type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+// ---- List: search, filters, sorting and paging all run in the database ----
+
+const ORDER_SORTS = {
+  date: "created_at",
+  order: "order_number",
+  total: "total",
+  status: "status",
+  payment: "payment_status",
+} as const;
+
+const orderListSchema = z.object({
+  q: z.string().max(200).optional(),
+  status: z.enum(ORDER_STATUSES).optional(),
+  paymentStatus: z.enum(["pending", "paid", "failed", "refunded", "partially_refunded"]).optional(),
+  paymentMethod: z.enum(["cod", "razorpay", "upi", "card"]).optional(),
+  custom: z.enum(["true", "false"]).optional(),
+  customerId: z.string().uuid().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  minTotal: z.coerce.number().min(0).optional(),
+  maxTotal: z.coerce.number().min(0).optional(),
+  sort: z.enum(Object.keys(ORDER_SORTS) as [keyof typeof ORDER_SORTS, ...(keyof typeof ORDER_SORTS)[]]).default("date"),
+  dir: z.enum(["asc", "desc"]).default("desc"),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+type OrderListQuery = z.infer<typeof orderListSchema>;
+
+function parseOrderQuery(query: unknown): OrderListQuery {
+  const parsed = orderListSchema.safeParse(query);
+  if (!parsed.success) throw HttpError.badRequest("Invalid order filters", parsed.error.flatten().fieldErrors);
+  return parsed.data;
+}
+
+/** Applies every list filter to a PostgREST query (shared by the page, its totals and the export). */
+/**
+ * The date filter needs the store timezone (async), so it's resolved once up front — the
+ * query builder itself is thenable, so it must never be returned from an async function
+ * (awaiting it would run the query).
+ */
+async function dateBounds(f: { from?: string; to?: string }) {
+  if (!f.from && !f.to) return null;
+  const range = await resolveRange({ from: f.from, to: f.to });
+  return { since: range.since, until: range.until };
+}
+
+function applyOrderFilters(query: any, f: OrderListQuery, dates: { since: string; until: string } | null) {
+  if (f.status) query = query.eq("status", f.status);
+  if (f.paymentStatus) query = query.eq("payment_status", f.paymentStatus);
+  if (f.paymentMethod) query = query.eq("payment_method", f.paymentMethod);
+  if (f.custom) query = query.eq("is_custom", f.custom === "true");
+  if (f.customerId) query = query.eq("customer_id", f.customerId);
+  if (f.minTotal !== undefined) query = query.gte("total", f.minTotal);
+  if (f.maxTotal !== undefined) query = query.lte("total", f.maxTotal);
+  if (dates) query = query.gte("created_at", dates.since).lte("created_at", dates.until);
+  // Every word must match one of: order number, tracking number, name, email or phone
+  for (const t of searchTokens(f.q)) {
+    const like = `%${t}%`;
+    query = query.or(
+      [
+        `order_number.ilike.${like}`,
+        `tracking_number.ilike.${like}`,
+        `guest_email.ilike.${like}`,
+        `shipping_address->>firstName.ilike.${like}`,
+        `shipping_address->>lastName.ilike.${like}`,
+        `shipping_address->>email.ilike.${like}`,
+        `shipping_address->>phone.ilike.${like}`,
+      ].join(",")
+    );
+  }
+  return query;
+}
+
 adminOrdersRouter.get("/", requirePermission("orders.view"), async (req, res, next) => {
   try {
-    const { status, paymentStatus, custom, page = "1", limit = "50" } = req.query as Record<string, string>;
-    let query = supabaseAdmin
-      .from("orders")
-      .select("*, order_items(*)", { count: "exact" })
-      .order("created_at", { ascending: false });
-    if (status) query = query.eq("status", status);
-    if (paymentStatus) query = query.eq("payment_status", paymentStatus);
+    const f = parseOrderQuery(req.query);
+    const dates = await dateBounds(f);
+    const from = (f.page - 1) * f.limit;
+    const pageQuery = applyOrderFilters(supabaseAdmin.from("orders").select("*, order_items(quantity)", { count: "exact" }), f, dates)
+      .order(ORDER_SORTS[f.sort], { ascending: f.dir === "asc" })
+      .order("id", { ascending: true })
+      .range(from, from + f.limit - 1);
 
-    const pageNum = Math.max(1, Number(page) || 1);
-    const limitNum = Math.min(300, Math.max(1, Number(limit) || 50));
-    query = query.range((pageNum - 1) * limitNum, pageNum * limitNum - 1);
-
-    const { data, error, count } = await query;
+    const [{ data, error, count }, totalsRows, { data: largest }] = await Promise.all([
+      pageQuery,
+      // Totals over the whole filtered set, not just this page
+      fetchAll<any>((a, b) =>
+        applyOrderFilters(supabaseAdmin.from("orders").select("id, total, refunded_amount, payment_status, status"), f, dates).order("id", { ascending: true }).range(a, b)
+      ),
+      supabaseAdmin.from("orders").select("total").order("total", { ascending: false }).limit(1),
+    ]);
     if (error) throw HttpError.internal(error.message);
 
-    let items = (data ?? []).map(toAdminOrderSummary);
-    let total = count ?? 0;
-    // Custom-order-ness lives in order_items JSON, not a queryable column — filtered
-    // in-app after the page loads. Fine at this catalog's order volume.
-    if (custom === "true") {
-      items = items.filter((i) => i.isCustomOrder);
-      total = items.length;
-    } else if (custom === "false") {
-      items = items.filter((i) => !i.isCustomOrder);
-      total = items.length;
-    }
+    const collected = totalsRows.filter((o) => ["paid", "partially_refunded", "refunded"].includes(o.payment_status));
+    res.json({
+      items: (data ?? []).map(toAdminOrderSummary),
+      total: count ?? 0,
+      page: f.page,
+      limit: f.limit,
+      stats: {
+        revenue: Math.round(collected.reduce((s, o) => s + Number(o.total) - Number(o.refunded_amount ?? 0), 0) * 100) / 100,
+        paid: collected.length,
+        pendingPayment: totalsRows.filter((o) => o.payment_status === "pending" && o.status !== "cancelled").length,
+        cancelledOrRefunded: totalsRows.filter((o) => ["cancelled", "refunded"].includes(o.status) || o.payment_status === "refunded").length,
+        maxTotal: Number(largest?.[0]?.total ?? 0),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
-    res.json({ items, total, page: pageNum, limit: limitNum });
+adminOrdersRouter.get("/export", requirePermission("orders.export"), async (req, res, next) => {
+  try {
+    const f = parseOrderQuery(req.query);
+    const dates = await dateBounds(f);
+    const rows = await fetchAll<any>((a, b) =>
+      applyOrderFilters(supabaseAdmin.from("orders").select("*, order_items(quantity)"), f, dates)
+        .order(ORDER_SORTS[f.sort], { ascending: f.dir === "asc" })
+        .order("id", { ascending: true })
+        .range(a, b)
+    );
+    const addr = (o: any) => o.shipping_address ?? {};
+    const csv = toCsv<any>(
+      [
+        ["Order", (o) => o.order_number],
+        ["Created", (o) => o.created_at],
+        ["Placed", (o) => o.placed_at],
+        ["Customer", (o) => [addr(o).firstName, addr(o).lastName].filter(Boolean).join(" ")],
+        ["Email", (o) => o.guest_email ?? addr(o).email],
+        ["Phone", (o) => addr(o).phone],
+        ["City", (o) => addr(o).city],
+        ["State", (o) => addr(o).state],
+        ["Pincode", (o) => addr(o).pincode],
+        ["Items", (o) => (o.order_items ?? []).reduce((s: number, i: any) => s + i.quantity, 0)],
+        ["Custom", (o) => (o.is_custom ? "yes" : "no")],
+        ["Subtotal", (o) => o.subtotal],
+        ["Discount", (o) => o.discount_amount],
+        ["Shipping", (o) => o.shipping_cost],
+        ["Gift wrap", (o) => o.gift_wrap_cost],
+        ["Tax", (o) => o.tax_amount],
+        ["Total", (o) => o.total],
+        ["Refunded", (o) => o.refunded_amount],
+        ["Payment method", (o) => o.payment_method],
+        ["Payment status", (o) => o.payment_status],
+        ["Status", (o) => o.status],
+        ["Courier", (o) => o.courier],
+        ["Tracking", (o) => o.tracking_number],
+      ],
+      rows
+    );
+    await logAudit({
+      userId: req.admin!.id,
+      action: "DATA_EXPORTED",
+      resource: "orders",
+      permission: "orders.export",
+      metadata: { rows: rows.length, filters: { ...f, page: undefined, limit: undefined } },
+      req,
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="suthrayaa-orders-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
   } catch (err) {
     next(err);
   }
@@ -89,7 +227,7 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Order not found");
 
-    const invoice = await getInvoiceForOrder(data.id);
+    const [invoice, returnCtx] = await Promise.all([getInvoiceForOrder(data.id), loadReturnContext(data.id)]);
     // Registered customers have no guest_email on the order — look up their login email
     let customerEmail: string | null = data.guest_email ?? null;
     if (!customerEmail && data.customer_id) {
@@ -116,6 +254,7 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
       razorpayOrderId: data.razorpay_order_id,
       razorpayPaymentId: data.razorpay_payment_id,
       courier: data.courier,
+      trackingUrl: data.tracking_url ?? null,
       adminNotes: data.admin_notes,
       customerNotes: data.customer_notes,
       invoiceNumber: invoice?.invoice_number ?? null,
@@ -125,6 +264,7 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
         .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         .map(toRefundDTO),
       allowedStatuses: ORDER_TRANSITIONS[data.status as OrderStatus] ?? [],
+      returnRequests: returnCtx.requests.map((r: any) => toReturnDTO(r, returnCtx.items)),
       items: (data.order_items ?? []).map((i: any) => ({
         id: i.id,
         productId: i.product_id,
@@ -167,6 +307,7 @@ export function buildOrderEmailData(order: any) {
     order_number: order.order_number,
     order_total: formatPrice(Number(order.total)),
     tracking_number: order.tracking_number ?? "",
+    tracking_url: order.tracking_url ?? "",
     store_name: getSettingSync<string>("store.name"),
     item_count: String(itemCount),
     subtotal: formatPrice(Number(order.subtotal)),
@@ -238,8 +379,6 @@ export function buildOrderEmailData(order: any) {
   return { variables, listVariables, rawVariables };
 }
 
-const ORDER_STATUSES = ["pending_payment", "confirmed", "in_production", "ready", "shipped", "delivered", "cancelled", "refunded", "partially_refunded"] as const;
-type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 /**
  * Where an order may go next from each status. Payment moves pending_payment → confirmed
@@ -273,6 +412,8 @@ const statusUpdateSchema = z.object({
   status: z.enum(ORDER_STATUSES),
   note: z.string().max(500).optional(),
   trackingNumber: z.string().max(100).optional().nullable(),
+  // Only real web links — this ends up as a button in the customer's email and account
+  trackingUrl: z.union([z.string().trim().url().max(500).refine((u) => /^https?:\/\//i.test(u), "Use an http(s) link"), z.literal(""), z.null()]).optional(),
   courier: z.string().max(100).optional().nullable(),
 });
 
@@ -289,6 +430,7 @@ adminOrdersRouter.patch("/:id/status", requirePermission("orders.update"), valid
 
     const shippingUpdate: Record<string, unknown> = {};
     if (body.trackingNumber !== undefined) shippingUpdate.tracking_number = body.trackingNumber;
+    if (body.trackingUrl !== undefined) shippingUpdate.tracking_url = body.trackingUrl || null;
     if (body.courier !== undefined) shippingUpdate.courier = body.courier;
 
     // Same status: just the courier / tracking fields — no history entry, no repeat email
@@ -455,6 +597,8 @@ adminOrdersRouter.post("/:id/refund", requirePermission("orders.refund"), valida
       changed_by: req.admin!.id,
     });
     if (restock) await restoreOrderStock(order.id);
+    // A refund settles an approved / received return on this order
+    await settleReturnWithRefund(order.id, refund?.id ?? null, req.admin!.id);
 
     const customerEmail = order.guest_email ?? order.shipping_address?.email;
     if (customerEmail) {

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission, requireAnyPermission } from "../../middleware/requirePermission.js";
 import { imageUpload, uploadProductImage, BUCKETS } from "../storage/upload.js";
 import { validate } from "../../middleware/validate.js";
@@ -23,6 +24,11 @@ export const adminHeroSlidesRouter = Router();
 for (const r of [adminCategoriesRouter, adminColorsRouter, adminTestimonialsRouter, adminHeroSlidesRouter]) {
   r.use(authenticate, requireAdmin);
 }
+adminCategoriesRouter.use(auditWrites("categories", "CATEGORY"));
+adminColorsRouter.use(auditWrites("colors", "COLOR"));
+adminTestimonialsRouter.use(auditWrites("testimonials", "TESTIMONIAL"));
+// An image upload alone changes nothing until the slide is saved
+adminHeroSlidesRouter.use(auditWrites("hero_slides", "HERO_SLIDE", { "/upload-image": null }));
 
 // ---- Categories ----
 

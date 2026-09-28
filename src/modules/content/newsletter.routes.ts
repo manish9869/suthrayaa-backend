@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
@@ -37,7 +38,7 @@ newsletterRouter.post("/", sensitiveLimiter, validate(subscribeSchema), async (r
 
 // ---- Admin: subscriber list ----
 export const adminNewsletterRouter = Router();
-adminNewsletterRouter.use(authenticate, requireAdmin);
+adminNewsletterRouter.use(authenticate, requireAdmin, auditWrites("newsletter_subscribers", "SUBSCRIBER"));
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const toDTO = (r: any) => ({ id: r.id, email: r.email, source: r.source, status: r.status, createdAt: r.created_at });

@@ -5,6 +5,7 @@ import { requirePermission, requireAnyPermission } from "../../middleware/requir
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logAudit } from "../rbac/audit.service.js";
+import { csvCell } from "../../lib/csv.js";
 import {
   OPEN_STATUSES,
   customerBreakdown,
@@ -329,14 +330,6 @@ const EXPORTS: Record<string, { title: string; rows: (r: Awaited<ReturnType<type
     columns: [["Product", (x) => x.name], ["SKU", (x) => x.sku], ["Status", (x) => x.status], ["Stock", (x) => (x.tracked ? x.stock : "not tracked")], ["Low-stock threshold", (x) => x.lowStockThreshold], ["Price", (x) => x.price], ["Cost price", (x) => x.costPrice], ["Stock value", (x) => (x.tracked ? Math.max(0, x.stock) * x.price : "")]],
   },
 };
-
-/** RFC 4180 quoting, plus a leading apostrophe on anything a spreadsheet would run as a formula. */
-function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  let s = String(value);
-  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 analyticsRouter.get("/reports/export", requirePermission("analytics.export"), async (req, res, next) => {
   try {

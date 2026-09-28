@@ -248,12 +248,13 @@ tpl.refund_processed = {
   subject: "Your refund for {{order_number}} has been processed",
   html: shell({
     title: "Refund processed",
-    preheader: "Your refund of {{order_total}} is on its way back to you.",
+    preheader: "Your refund of {{#if refund_amount}}{{refund_amount}}{{else}}{{order_total}}{{/if}} is on its way back to you.",
     body: `${eyebrow("Refund processed", "gold")}
 ${h1("Your refund is on its way")}
 ${p("Hi {{customer_name}}, we've processed the refund for your order. It's been sent back to your original payment method.")}
 ${panel(kv([
-  { label: "Refund amount", value: "{{order_total}}", strong: true },
+  // A partial refund sends refund_amount; a full one may only carry the order total
+  { label: "Refund amount", value: "{{#if refund_amount}}{{refund_amount}}{{else}}{{order_total}}{{/if}}", strong: true },
   { label: "Order", value: "{{order_number}}" },
   { label: "Status", value: "&#10003; Processed", color: T.green },
 ]), { tone: "gold", icon: "&#8377;", title: "Refund details" })}
@@ -400,6 +401,28 @@ ${buttons(button("Open orders", "{{store_url}}/admin/orders"))}`,
 };
 
 /* ============================================================ write */
+
+// One template for every step of a return / exchange; the sender supplies the headline and
+// message for the step (returns.service.ts), so new steps don't need new templates.
+tpl.return_update = {
+  subject: "{{return_subject}}",
+  html: shell({
+    title: "Your return",
+    preheader: "{{return_headline}} — order {{order_number}}.",
+    body: `${eyebrow("{{return_label}}", "violet")}
+${h1("{{return_headline}}")}
+${p("Hi {{customer_name}}, {{return_message}}")}
+${panel(kv([
+  { label: "Order", value: "{{order_number}}" },
+  { label: "Request", value: "{{return_type}}" },
+  { label: "Items", value: "{{return_items}}" },
+  { label: "Status", value: "{{return_status}}", strong: true },
+]), { tone: "violet", title: "Request details" })}
+{{#if admin_note}}${note("<strong>Note from us:</strong> {{admin_note}}", "gold")}{{/if}}
+${viewOrder("View your order")}
+${helpLine("Questions about your return?")}`,
+  }),
+};
 
 for (const [type, t] of Object.entries(tpl)) {
   const html = t.html.replace(/\n\s*\n/g, "\n");

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
+import { auditWrites } from "../rbac/audit.service.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
@@ -13,7 +14,7 @@ import { HttpError } from "../../lib/httpError.js";
 // independently; there is no live link back to the template after cloning. Gated under
 // `products.*` — this is product-authoring tooling, not a distinct resource of its own.
 export const adminCustomizationTemplatesRouter = Router();
-adminCustomizationTemplatesRouter.use(authenticate, requireAdmin);
+adminCustomizationTemplatesRouter.use(authenticate, requireAdmin, auditWrites("customization_templates", "OPTION_TEMPLATE"));
 
 adminCustomizationTemplatesRouter.get("/", requirePermission("products.view"), async (_req, res, next) => {
   try {

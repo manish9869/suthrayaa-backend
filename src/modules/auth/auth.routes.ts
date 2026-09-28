@@ -5,6 +5,8 @@ import { authenticate } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
 import { sensitiveLimiter, moderateLimiter } from "../../middleware/rateLimiter.js";
 import { HttpError } from "../../lib/httpError.js";
+import { supabaseAdmin } from "../../config/supabase.js";
+import { logAudit } from "../rbac/audit.service.js";
 
 /**
  * Auth gateway — the storefront and admin console never talk to Supabase directly (no Supabase
@@ -94,13 +96,36 @@ const bearer = (req: Request) => req.headers.authorization!.slice("Bearer ".leng
 
 const credentials = z.object({ email: z.string().trim().toLowerCase().email(), password: z.string().min(1).max(200) });
 
-authRouter.post("/login", sensitiveLimiter, validate(credentials), async (req, res, next) => {
+/** The admin_users id for a user id / email, or null for customers. Best-effort — auditing must never break sign-in. */
+async function adminIdFor(by: { id?: string; email?: string }): Promise<string | null> {
   try {
-    const { email, password } = req.body as z.infer<typeof credentials>;
+    let id = by.id;
+    if (!id && by.email) {
+      const { data } = await supabaseAdmin.from("customer_profiles").select("id").ilike("email", by.email).maybeSingle();
+      id = data?.id;
+    }
+    if (!id) return null;
+    const { data: admin } = await supabaseAdmin.from("admin_users").select("id").eq("id", id).maybeSingle();
+    return admin?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+authRouter.post("/login", sensitiveLimiter, validate(credentials), async (req, res, next) => {
+  const { email, password } = req.body as z.infer<typeof credentials>;
+  try {
     const session = toSession(await gotrue<GoTrueSession>("/token", { query: { grant_type: "password" }, body: { email, password } }));
     if (!session) throw HttpError.unauthorized("Incorrect email or password");
+    // Admin sign-ins (and failed attempts on admin accounts) go to the audit log; customers' don't
+    const adminId = await adminIdFor({ id: session.user.id });
+    if (adminId) await logAudit({ userId: adminId, action: "ADMIN_LOGIN", resource: "auth", resourceId: adminId, metadata: { email }, req });
     res.json({ session });
   } catch (err) {
+    if (err instanceof HttpError && err.status < 500) {
+      const adminId = await adminIdFor({ email });
+      if (adminId) await logAudit({ userId: adminId, action: "ADMIN_LOGIN_FAILED", resource: "auth", resourceId: adminId, metadata: { email }, req });
+    }
     next(err);
   }
 });
@@ -119,7 +144,10 @@ authRouter.post("/refresh", moderateLimiter, validate(z.object({ refreshToken: z
 /** scope: "local" = this device, "others" = every other device, "global" = everywhere. */
 authRouter.post("/logout", authenticate, validate(z.object({ scope: z.enum(["local", "others", "global"]).default("local") })), async (req, res, next) => {
   try {
-    await gotrue("/logout", { token: bearer(req), query: { scope: (req.body as { scope: string }).scope } });
+    const { scope } = req.body as { scope: string };
+    await gotrue("/logout", { token: bearer(req), query: { scope } });
+    const adminId = await adminIdFor({ id: req.user!.id });
+    if (adminId) await logAudit({ userId: adminId, action: "ADMIN_LOGOUT", resource: "auth", resourceId: adminId, metadata: { scope }, req });
     res.status(204).end();
   } catch (err) {
     next(err);
