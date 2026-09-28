@@ -78,3 +78,11 @@ describe("privilege escalation", () => {
     expect(res.status).toBe(201);
   });
 });
+
+describe("email is locked after sign-up", () => {
+  it("refuses email changes for signed-in users", async () => {
+    const res = await api().post("/api/auth/email").set(auth(CUSTOMER_A)).send({ email: "new@example.com" });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("EMAIL_LOCKED");
+  });
+});
