@@ -45,6 +45,7 @@ import { adminUsersRouter } from "./modules/admin/admin.users.routes.js";
 import { adminRolesRouter, adminPermissionsRouter } from "./modules/admin/admin.roles.routes.js";
 import { adminAuditLogsRouter } from "./modules/admin/admin.auditLogs.routes.js";
 import { adminProductsRouter } from "./modules/admin/admin.products.routes.js";
+import { adminProductPreviewRouter } from "./modules/admin/admin.productPreview.routes.js";
 import {
   adminCategoriesRouter,
   adminColorsRouter,
@@ -154,6 +155,7 @@ export function createApp() {
   // Admin — every router here applies its own authenticate + requireAdmin internally.
   app.use("/api/admin", adminMeRouter);
   app.use("/api/admin/products", adminProductsRouter);
+  app.use("/api/admin/products", adminProductPreviewRouter);
   app.use("/api/admin/categories", adminCategoriesRouter);
   app.use("/api/admin/colors", adminColorsRouter);
   app.use("/api/admin/testimonials", adminTestimonialsRouter);

@@ -73,6 +73,7 @@ export const SETTINGS: SettingDef[] = [
   def("storefront.reviews", "storefront", "Product Reviews", "boolean", true),
   def("storefront.ratings", "storefront", "Product Ratings", "boolean", true),
   def("storefront.comparison", "storefront", "Product Comparison", "boolean", false),
+  def("storefront.color_preview", "storefront", "Live Color Preview (Customize & Preview)", "boolean", false),
   def("storefront.show_stock_quantity", "storefront", "Show Stock Quantity", "boolean", false),
   def("storefront.show_sku", "storefront", "Show SKU", "boolean", false),
   def("storefront.show_weight", "storefront", "Show Product Weight", "boolean", false),
