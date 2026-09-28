@@ -63,14 +63,26 @@ async function gotrue<T>(path: string, init: { method?: string; body?: unknown; 
 }
 
 /** What the frontend stores — never includes provider secrets. */
+/** Email sign-up stores first_name/last_name; Google sends given_name/family_name or just
+ * full_name/name — mirrors public.signup_name_parts() in the database. */
+function nameParts(meta: Record<string, unknown>) {
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const claims = (meta.custom_claims ?? {}) as Record<string, unknown>;
+  const full = str(meta.full_name) ?? str(meta.name);
+  const [fullFirst, ...fullRest] = full ? full.split(/\s+/) : [];
+  return {
+    firstName: str(meta.first_name) ?? str(meta.given_name) ?? str(claims.given_name) ?? fullFirst ?? null,
+    lastName: str(meta.last_name) ?? str(meta.family_name) ?? str(claims.family_name) ?? (fullRest.join(" ") || null),
+  };
+}
+
 function toUser(u: GoTrueUser) {
   const meta = u.user_metadata ?? {};
   return {
     id: u.id,
     email: u.email ?? null,
     phone: u.phone || null,
-    firstName: (meta.first_name as string) ?? null,
-    lastName: (meta.last_name as string) ?? null,
+    ...nameParts(meta),
     providers: u.app_metadata?.providers ?? (u.app_metadata?.provider ? [u.app_metadata.provider] : []),
   };
 }
@@ -227,15 +239,12 @@ authRouter.post(
   }
 );
 
-/** Change email — Supabase emails a confirmation link that lands on /auth/callback. */
-authRouter.post("/email", sensitiveLimiter, authenticate, validate(z.object({ email: z.string().trim().toLowerCase().email() })), async (req, res, next) => {
-  try {
-    const { email } = req.body as { email: string };
-    await gotrue("/user", { method: "PUT", token: bearer(req), query: { redirect_to: frontendCallback("/account/profile") }, body: { email } });
-    res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
+/** Email is fixed once an account exists — it's the sign-in identity and where order mail
+ * goes. Refused explicitly (not just hidden in the UI) so no client can change it. */
+authRouter.post("/email", authenticate, (_req, res) => {
+  res.status(403).json({
+    error: { message: "Your email address can’t be changed. Contact us if you need help with your account.", code: "EMAIL_LOCKED" },
+  });
 });
 
 // ---- Google sign-in ----
