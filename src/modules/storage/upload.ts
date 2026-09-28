@@ -10,7 +10,24 @@ export const BUCKETS = {
   heroMedia: "hero-media",
   avatars: "avatars",
   customerUploads: "customer-uploads",
+  /** Public static storefront media + admin-uploaded videos (created by `npm run upload:site-media`). */
+  siteMedia: "site-media",
 } as const;
+
+export const VIDEO_TYPES = { "video/mp4": "mp4", "video/webm": "webm" } as const;
+
+/**
+ * Videos are too big for the serverless request-body cap, so instead of proxying them the
+ * API hands the admin a one-time signed URL and the browser uploads straight to Storage.
+ * The path is server-chosen (random name), so the token can't overwrite anything else.
+ */
+export async function createVideoUploadUrl(contentType: keyof typeof VIDEO_TYPES) {
+  const path = `videos/${randomUUID()}.${VIDEO_TYPES[contentType]}`;
+  const bucket = supabaseAdmin.storage.from(BUCKETS.siteMedia);
+  const { data, error } = await bucket.createSignedUploadUrl(path);
+  if (error || !data) throw HttpError.internal(`Could not start video upload: ${error?.message ?? "unknown error"}`);
+  return { uploadUrl: data.signedUrl, publicUrl: bucket.getPublicUrl(path).data.publicUrl };
+}
 
 // Kept under Vercel's 4.5 MB serverless request-body cap (multipart overhead included) so
 // oversize files get this API's clear error instead of an opaque platform 413.

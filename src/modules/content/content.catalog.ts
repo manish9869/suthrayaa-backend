@@ -193,7 +193,7 @@ export const CONTENT_BLOCKS: ContentBlock[] = [
           text("title", "Title"),
           text("tag", "Tag"),
           url("href", "Link"),
-          { name: "videoUrl", label: "Video (MP4)", type: "video", help: "A short 9:16 MP4 — paste a URL (e.g. a Supabase Storage public link)." },
+          { name: "videoUrl", label: "Video (MP4)", type: "video", help: "A short 9:16 MP4 — upload one (max 50 MB) or paste any public video URL." },
           { name: "videoWebmUrl", label: "Video (WebM, optional)", type: "video" },
           image("poster", "Poster image"),
         ],

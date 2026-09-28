@@ -5,7 +5,7 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { requireAnyPermission, requirePermission } from "../../middleware/requirePermission.js";
 import { validate } from "../../middleware/validate.js";
 import { HttpError } from "../../lib/httpError.js";
-import { imageUpload, uploadProductImage, BUCKETS } from "../storage/upload.js";
+import { imageUpload, uploadProductImage, createVideoUploadUrl, BUCKETS, VIDEO_TYPES } from "../storage/upload.js";
 import { logAudit } from "../rbac/audit.service.js";
 import { CONTENT_ICONS } from "./content.catalog.js";
 import { getAllContent, getContent, getAdminContent, saveContent, resetContent } from "./content.service.js";
@@ -52,6 +52,21 @@ adminContentRouter.post(
       if (!req.file) throw HttpError.badRequest("No image uploaded");
       const { url } = await uploadProductImage(BUCKETS.heroMedia, "content", req.file.buffer, 2000);
       res.status(201).json({ url });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/** Signed direct-to-Storage upload URL for a content video (reels). The client PUTs the file
+ * to `uploadUrl`, then saves `publicUrl` into the block. */
+adminContentRouter.post(
+  "/video-upload-url",
+  requireAnyPermission("content.create", "content.update"),
+  validate(z.object({ contentType: z.enum(Object.keys(VIDEO_TYPES) as [keyof typeof VIDEO_TYPES]) })),
+  async (req, res, next) => {
+    try {
+      res.status(201).json(await createVideoUploadUrl(req.body.contentType));
     } catch (err) {
       next(err);
     }
