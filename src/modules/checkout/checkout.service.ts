@@ -875,17 +875,19 @@ export async function verifyRazorpayPayment(input: {
 export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, razorpayPaymentId?: string, fallbackOrderId?: string) {
   const columns =
     "id, order_number, status, payment_status, payment_method, customer_id, guest_email, coupon_id, discount_amount, subtotal, shipping_cost, gift_wrap_cost, total, shipping_address";
-  let { data: order } = await supabaseAdmin.from("orders").select(columns).eq("razorpay_order_id", razorpayOrderId).maybeSingle();
-  if (!order && fallbackOrderId) {
-    ({ data: order } = await supabaseAdmin.from("orders").select(columns).eq("id", fallbackOrderId).maybeSingle());
+  let { data: order, error: findErr } = await supabaseAdmin.from("orders").select(columns).eq("razorpay_order_id", razorpayOrderId).maybeSingle();
+  if (!order && !findErr && fallbackOrderId) {
+    ({ data: order, error: findErr } = await supabaseAdmin.from("orders").select(columns).eq("id", fallbackOrderId).maybeSingle());
   }
+  // A failed lookup must not read as "no such order" — the webhook would ack and never retry
+  if (findErr) throw HttpError.internal(`Order lookup failed: ${findErr.message}`);
   if (!order) return null;
   if (order.payment_status === "paid") return order;
 
   // Paid after the customer (or an admin) cancelled: record the payment, keep it cancelled,
   // and flag it for a refund rather than silently reviving the order.
   const cancelled = order.status === "cancelled";
-  const { data: claimed } = await supabaseAdmin
+  const { data: claimed, error: claimErr } = await supabaseAdmin
     .from("orders")
     .update({
       payment_status: "paid",
@@ -897,6 +899,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
     .eq("id", order.id)
     .neq("payment_status", "paid")
     .select("id");
+  if (claimErr) throw HttpError.internal(`Could not record payment: ${claimErr.message}`);
   if (!claimed?.length) return { ...order, payment_status: "paid" };
 
   if (cancelled) {

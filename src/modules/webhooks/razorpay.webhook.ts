@@ -56,7 +56,10 @@ export async function razorpayWebhookHandler(req: Request, res: Response) {
       if (razorpayOrderId) await markOrderFailedByRazorpayOrderId(razorpayOrderId);
     }
   } catch (err) {
-    logger.error({ err }, "Failed to process Razorpay webhook");
+    // Non-2xx makes Razorpay retry (with backoff, for up to 24h); processing is idempotent,
+    // so a transient DB failure under load can't leave a captured payment unrecorded.
+    logger.error({ err, event }, "Failed to process Razorpay webhook");
+    return res.status(500).json({ error: "Processing failed" });
   }
 
   res.status(200).json({ received: true });

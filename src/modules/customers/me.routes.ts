@@ -3,7 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { authenticate } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
-import { sensitiveLimiter } from "../../middleware/rateLimiter.js";
+import { checkoutLimiter, sensitiveLimiter } from "../../middleware/rateLimiter.js";
 import { HttpError } from "../../lib/httpError.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
 import { isValidIndianMobile, isValidIndianPincode, isValidIndianState, normalizeIndianMobile } from "../settings/india.data.js";
@@ -475,7 +475,7 @@ meRouter.post("/returns/:id/cancel", sensitiveLimiter, async (req, res, next) =>
 });
 
 /** Starts a new online payment for an order still awaiting payment. */
-meRouter.post("/orders/:id/pay", sensitiveLimiter, async (req, res, next) => {
+meRouter.post("/orders/:id/pay", checkoutLimiter, async (req, res, next) => {
   try {
     const { order, razorpayOrder } = await createPaymentForExistingOrder(req.params.id, req.user!.id);
     res.json({

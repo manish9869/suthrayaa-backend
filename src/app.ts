@@ -22,6 +22,7 @@ import { newsletterRouter, adminNewsletterRouter } from "./modules/content/newsl
 import { buildOpenApiSpec, SWAGGER_UI_HTML, SWAGGER_UI_CSP } from "./docs/openapi.js";
 import { warmSettingsCache } from "./modules/settings/settings.service.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
+import { edgeCache } from "./middleware/edgeCache.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
 import { webhooksRouter } from "./modules/webhooks/webhooks.routes.js";
@@ -115,6 +116,16 @@ export function createApp() {
         error || !data ? { connected: false, hint: error?.message ?? "unknown" } : { connected: true },
     });
   });
+
+  // Public, identical-for-everyone reads — cached at the CDN edge (see edgeCache)
+  app.use(
+    [
+      "/api/categories", "/api/products", "/api/colors", "/api/testimonials", "/api/hero-slides",
+      "/api/site-settings/public", "/api/nav-items", "/api/footer-links", "/api/homepage-sections",
+      "/api/content", "/api/theme", "/api/checkout/options",
+    ],
+    edgeCache()
+  );
 
   // Public catalog
   app.use("/api/categories", categoriesRouter);
