@@ -6,6 +6,7 @@ import { env } from "../../config/env.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logger } from "../../lib/logger.js";
 import { PRODUCT_SELECT, getEffectivePrice } from "../catalog/serializers.js";
+import { isLibraryHexSync } from "../catalog/library-colors.js";
 import {
   sendAdminOrderNotification,
   sendTemplatedEmail,
@@ -131,6 +132,10 @@ function resolveCustomizations(product: any, selections: CustomizationSelectionI
     const value = enabledValues.find((v) => v.id === selection.valueId);
     if (!value) {
       throw HttpError.badRequest(`That option isn't available for "${group.label}" on this product`);
+    }
+    // Colours must still be in the Colors library (the cache is warmed per request in app.ts).
+    if (group.type === "color" && !isLibraryHexSync(value.value)) {
+      throw HttpError.badRequest(`${value.label} is no longer available for "${group.label}" — please pick another colour`);
     }
     const priceAdjustment = Number(value.price_adjustment ?? 0);
     priceAdjustmentTotal += priceAdjustment;

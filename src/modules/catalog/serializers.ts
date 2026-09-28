@@ -4,6 +4,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { isLibraryHexSync } from "./library-colors.js";
+
 export function toCategoryDTO(row: any, productCount = 0) {
   return {
     id: row.id,
@@ -104,8 +106,11 @@ function toCustomizationOptionsDTO(rule: any) {
 
 /** Maps a product_customizations row (with nested customization_values) to the API shape. */
 function toProductCustomizationDTO(row: any, includeDisabled: boolean) {
+  const isColor = row.type === "color";
   const values = (row.customization_values ?? [])
-    .filter((v: any) => includeDisabled || v.enabled)
+    // Customers only ever see colours from the Colors library; the admin sees every value
+    // (flagged) so legacy hand-typed colours can be spotted and replaced.
+    .filter((v: any) => includeDisabled || (v.enabled && (!isColor || isLibraryHexSync(v.value))))
     .slice()
     .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     .map((v: any) => ({
@@ -115,6 +120,7 @@ function toProductCustomizationDTO(row: any, includeDisabled: boolean) {
       priceAdjustment: Number(v.price_adjustment ?? 0),
       enabled: v.enabled,
       sku: v.sku ?? undefined,
+      ...(isColor ? { inLibrary: isLibraryHexSync(v.value) } : {}),
     }));
 
   return {

@@ -9,6 +9,7 @@ import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { generateUniqueSlug, isSlugTaken } from "../../lib/slug.js";
+import { invalidateLibraryColors } from "../catalog/library-colors.js";
 
 // Categories, colors, testimonials, and hero slides are all simple, low-volume CRUD
 // resources with the same shape of admin needs — kept in one file rather than four
@@ -286,15 +287,31 @@ adminColorsRouter.post("/", requirePermission("colors.create"), validate(colorSc
       .select("*")
       .single();
     if (error) throw HttpError.internal(error.message);
+    invalidateLibraryColors();
     res.status(201).json(data);
   } catch (err) {
     next(err);
   }
 });
 
+/** Re-points Color option values that used `oldHex` at the library colour's new name/hex. */
+async function syncColorOptionValues(oldHex: string, name: string, hex: string) {
+  const { data: rows, error } = await supabaseAdmin
+    .from("customization_values")
+    .select("id, product_customizations!inner(type)")
+    .ilike("value", oldHex)
+    .eq("product_customizations.type", "color");
+  if (error) throw HttpError.internal(error.message);
+  const ids = (rows ?? []).map((r) => r.id);
+  if (ids.length === 0) return;
+  const { error: uErr } = await supabaseAdmin.from("customization_values").update({ label: name, value: hex }).in("id", ids);
+  if (uErr) throw HttpError.internal(uErr.message);
+}
+
 adminColorsRouter.patch("/:id", requirePermission("colors.update"), validate(colorSchema.partial()), async (req, res, next) => {
   try {
     const b = req.body as Partial<z.infer<typeof colorSchema>>;
+    const { data: before } = await supabaseAdmin.from("colors").select("name, hex").eq("id", req.params.id).maybeSingle();
     const { data, error } = await supabaseAdmin
       .from("colors")
       .update({ name: b.name, hex: b.hex, sort_order: b.sortOrder, is_active: b.isActive })
@@ -303,6 +320,12 @@ adminColorsRouter.patch("/:id", requirePermission("colors.update"), validate(col
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Color not found");
+    // Product colour options point at library colours by hex — carry a rename/re-hex through
+    // to them so they stay linked instead of silently dropping off the storefront.
+    if (before && (before.hex !== data.hex || before.name !== data.name)) {
+      await syncColorOptionValues(before.hex, data.name, data.hex);
+    }
+    invalidateLibraryColors();
     res.json(data);
   } catch (err) {
     next(err);
@@ -313,6 +336,7 @@ adminColorsRouter.delete("/:id", requirePermission("colors.delete"), async (req,
   try {
     const { error } = await supabaseAdmin.from("colors").update({ is_active: false }).eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
+    invalidateLibraryColors();
     res.status(204).end();
   } catch (err) {
     next(err);

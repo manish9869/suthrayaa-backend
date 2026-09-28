@@ -21,6 +21,7 @@ import { warmThemeCache } from "./modules/theme/theme.service.js";
 import { newsletterRouter, adminNewsletterRouter } from "./modules/content/newsletter.routes.js";
 import { buildOpenApiSpec, SWAGGER_UI_HTML, SWAGGER_UI_CSP } from "./docs/openapi.js";
 import { warmSettingsCache } from "./modules/settings/settings.service.js";
+import { warmLibraryColors } from "./modules/catalog/library-colors.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
 import { edgeCache } from "./middleware/edgeCache.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
@@ -92,7 +93,7 @@ export function createApp() {
   // Keep the settings cache loaded/fresh for the synchronous getSettingSync() readers —
   // serverless instances never run server.ts's startup code. Cheap no-op within the TTL.
   app.use((_req, _res, next) => {
-    Promise.all([warmSettingsCache(), warmThemeCache()])
+    Promise.all([warmSettingsCache(), warmThemeCache(), warmLibraryColors()])
       .catch((err) => logger.error({ err }, "Failed to load site settings / theme"))
       .finally(() => next());
   });
