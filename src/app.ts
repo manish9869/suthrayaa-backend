@@ -21,6 +21,7 @@ import { warmThemeCache } from "./modules/theme/theme.service.js";
 import { newsletterRouter, adminNewsletterRouter } from "./modules/content/newsletter.routes.js";
 import { buildOpenApiSpec, SWAGGER_UI_HTML, SWAGGER_UI_CSP } from "./docs/openapi.js";
 import { warmSettingsCache } from "./modules/settings/settings.service.js";
+import { warmLibraryColors } from "./modules/catalog/library-colors.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
 import { edgeCache } from "./middleware/edgeCache.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
@@ -45,6 +46,7 @@ import { adminUsersRouter } from "./modules/admin/admin.users.routes.js";
 import { adminRolesRouter, adminPermissionsRouter } from "./modules/admin/admin.roles.routes.js";
 import { adminAuditLogsRouter } from "./modules/admin/admin.auditLogs.routes.js";
 import { adminProductsRouter } from "./modules/admin/admin.products.routes.js";
+import { adminProductPreviewRouter } from "./modules/admin/admin.productPreview.routes.js";
 import {
   adminCategoriesRouter,
   adminColorsRouter,
@@ -60,6 +62,7 @@ import { adminEmailTemplatesRouter, adminEmailLogsRouter } from "./modules/admin
 import { adminInvoiceSettingsRouter } from "./modules/admin/admin.settings.routes.js";
 import { adminSiteSettingsRouter } from "./modules/admin/admin.siteSettings.routes.js";
 import { analyticsRouter } from "./modules/analytics/analytics.routes.js";
+import { insightsRouter } from "./modules/analytics/insights/insights.routes.js";
 import { adminReturnsRouter } from "./modules/returns/admin.returns.routes.js";
 import {
   publicSettingsRouter,
@@ -91,7 +94,7 @@ export function createApp() {
   // Keep the settings cache loaded/fresh for the synchronous getSettingSync() readers —
   // serverless instances never run server.ts's startup code. Cheap no-op within the TTL.
   app.use((_req, _res, next) => {
-    Promise.all([warmSettingsCache(), warmThemeCache()])
+    Promise.all([warmSettingsCache(), warmThemeCache(), warmLibraryColors()])
       .catch((err) => logger.error({ err }, "Failed to load site settings / theme"))
       .finally(() => next());
   });
@@ -154,6 +157,7 @@ export function createApp() {
   // Admin — every router here applies its own authenticate + requireAdmin internally.
   app.use("/api/admin", adminMeRouter);
   app.use("/api/admin/products", adminProductsRouter);
+  app.use("/api/admin/products", adminProductPreviewRouter);
   app.use("/api/admin/categories", adminCategoriesRouter);
   app.use("/api/admin/colors", adminColorsRouter);
   app.use("/api/admin/testimonials", adminTestimonialsRouter);
@@ -168,6 +172,7 @@ export function createApp() {
   app.use("/api/admin/settings/invoice", adminInvoiceSettingsRouter);
   app.use("/api/admin/settings", adminSiteSettingsRouter);
   app.use("/api/admin/analytics", analyticsRouter);
+  app.use("/api/admin/insights", insightsRouter);
   app.use("/api/admin/returns", adminReturnsRouter);
   app.use("/api/admin/users", adminUsersRouter);
   app.use("/api/admin/roles", adminRolesRouter);

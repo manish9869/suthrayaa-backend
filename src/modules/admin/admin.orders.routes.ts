@@ -277,6 +277,8 @@ adminOrdersRouter.get("/:id", requirePermission("orders.view"), async (req, res,
         selectedColor: i.selected_color_hex,
         customText: i.custom_text,
         customizations: i.customizations ?? [],
+        // Only present for lines ordered with the live color preview (0020 migration)
+        previewSnapshot: i.preview_snapshot ?? undefined,
       })),
       statusHistory: (data.order_status_history ?? [])
         .slice()

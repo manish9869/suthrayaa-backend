@@ -36,6 +36,13 @@ const envSchema = z.object({
   GMAIL_USER: z.string().optional().default(""),
   GMAIL_APP_PASSWORD: z.string().optional().default(""),
   ADMIN_NOTIFICATION_EMAIL: z.string().optional().default("suthrayaa@gmail.com"),
+
+  // GA4 reports in Admin → Insights (Google Analytics Data API, read-only). A Google Cloud
+  // service account with "Viewer" access to the GA4 property; the numeric property id is in
+  // GA → Admin → Property details. The private key may keep its escaped \n line breaks.
+  GA4_PROPERTY_ID: z.string().regex(/^\d*$/, "GA4_PROPERTY_ID is the numeric property id").optional().default(""),
+  GA4_CLIENT_EMAIL: z.string().optional().default(""),
+  GA4_PRIVATE_KEY: z.string().optional().default(""),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -52,3 +59,5 @@ export const isPhoneOtpConfigured = Boolean(
 );
 
 export const isEmailConfigured = Boolean(env.GMAIL_USER && env.GMAIL_APP_PASSWORD);
+
+export const isGa4Configured = Boolean(env.GA4_PROPERTY_ID && env.GA4_CLIENT_EMAIL && env.GA4_PRIVATE_KEY);

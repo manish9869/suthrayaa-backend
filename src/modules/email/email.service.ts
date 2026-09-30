@@ -20,6 +20,15 @@ interface OrderEmailItem {
   lineTotal: number;
   selectedColorName?: string | null;
   customText?: string | null;
+  /** The resolved customization snapshot (order_items.customizations) — one entry per choice. */
+  customizations?: {
+    label: string;
+    type: string;
+    valueLabel?: string;
+    value?: string;
+    textValue?: string;
+    priceAdjustment: number;
+  }[];
 }
 
 interface OrderEmailPayload {
@@ -43,6 +52,8 @@ interface OrderEmailPayload {
     phone: string;
   };
   items: OrderEmailItem[];
+  /** Admin emails only: deep link to the order's work order in the admin console. */
+  adminOrderUrl?: string;
 }
 
 // The storefront / invoice design system (ink header, lilac canvas, violet + peach accents) —
@@ -50,17 +61,43 @@ interface OrderEmailPayload {
 type BadgeTone = "good" | "warning" | "critical" | "neutral";
 const BADGE_TONE: Record<BadgeTone, Tone> = { good: "green", warning: "gold", critical: "red", neutral: "violet" };
 
-function itemsRows(items: OrderEmailItem[]) {
+const HEX_RE = /^#[0-9a-f]{3,8}$/i;
+
+/** One line per customization choice — part, chosen color (with a swatch) or option, and any
+ * price change — so whoever makes the piece can work straight from the email. */
+function customizationLines(item: OrderEmailItem) {
+  const list = item.customizations ?? [];
+  if (list.length === 0) return "";
+  const rows = list
+    .map((c) => {
+      const swatch =
+        c.type === "color" && c.value && HEX_RE.test(c.value)
+          ? `<span style="display:inline-block;width:11px;height:11px;border-radius:11px;background:${c.value};border:1px solid ${T.border};vertical-align:-1px;margin-right:5px;"></span>`
+          : "";
+      const shown = c.valueLabel ?? c.textValue ?? "";
+      const hex = c.type === "color" && c.value && HEX_RE.test(c.value) ? ` <span style="color:${T.muted};">(${escapeHtml(c.value.toUpperCase())})</span>` : "";
+      const price = c.priceAdjustment ? ` <span style="color:${T.muted};">${c.priceAdjustment > 0 ? "+" : "&minus;"}${formatPrice(Math.abs(c.priceAdjustment))}</span>` : "";
+      return `<p style="margin:2px 0 0;font-family:${SANS};font-size:12.5px;color:${T.text};"><strong style="color:${T.ink};">${escapeHtml(c.label)}:</strong> ${swatch}${escapeHtml(shown)}${hex}${price}</p>`;
+    })
+    .join("");
+  return `<div style="margin-top:6px;">${rows}</div>`;
+}
+
+function itemsRows(items: OrderEmailItem[], adminOrderUrl?: string) {
   return items
     .map((i) => {
       const meta = [i.selectedColorName ? escapeHtml(i.selectedColorName) : null, i.customText ? `&ldquo;${escapeHtml(i.customText)}&rdquo;` : null, `Qty ${i.quantity}`]
         .filter(Boolean)
         .join(" &middot; ");
+      const workOrderLink =
+        adminOrderUrl && (i.customizations?.length ?? 0) > 0
+          ? `<p style="margin:6px 0 0;font-family:${SANS};font-size:12.5px;"><a href="${escapeHtml(adminOrderUrl)}" target="_blank" style="color:#6D4AFF;font-weight:700;text-decoration:none;">View work order &amp; design preview &rarr;</a></p>`
+          : "";
       return `
       <tr>
         <td style="padding:14px 18px;border-bottom:1px solid ${T.border};">
           <p style="margin:0 0 3px;font-family:${SANS};font-size:14.5px;font-weight:700;color:${T.ink};">${escapeHtml(i.name)}</p>
-          <p style="margin:0;font-family:${SANS};font-size:12.5px;color:${T.muted};">${meta}</p>
+          <p style="margin:0;font-family:${SANS};font-size:12.5px;color:${T.muted};">${meta}</p>${customizationLines(i)}${workOrderLink}
         </td>
         <td align="right" valign="top" style="padding:14px 18px;border-bottom:1px solid ${T.border};white-space:nowrap;font-family:${SANS};font-size:14.5px;font-weight:700;color:${T.ink};">${formatPrice(i.lineTotal)}</td>
       </tr>`;
@@ -89,7 +126,7 @@ function summaryRows(payload: OrderEmailPayload) {
 export function renderOrderDetailsHtml(payload: OrderEmailPayload) {
   return `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${T.border};border-radius:16px;border-collapse:separate;overflow:hidden;">
-      ${itemsRows(payload.items)}
+      ${itemsRows(payload.items, payload.adminOrderUrl)}
       ${summaryRows(payload)}
       <tr><td colspan="2" style="padding:10px 12px 12px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${T.ink};border-radius:12px;"><tr>

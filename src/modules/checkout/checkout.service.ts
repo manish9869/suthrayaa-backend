@@ -6,6 +6,7 @@ import { env } from "../../config/env.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logger } from "../../lib/logger.js";
 import { PRODUCT_SELECT, getEffectivePrice } from "../catalog/serializers.js";
+import { isLibraryHexSync } from "../catalog/library-colors.js";
 import {
   sendAdminOrderNotification,
   sendTemplatedEmail,
@@ -20,6 +21,7 @@ import { getSetting } from "../settings/settings.service.js";
 import { computeOrderGst } from "../settings/tax.service.js";
 import { getTaxCategories } from "../settings/taxCategories.service.js";
 import { background } from "../../lib/background.js";
+import { buildPreviewSnapshots } from "../preview/preview.service.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -130,6 +132,10 @@ function resolveCustomizations(product: any, selections: CustomizationSelectionI
     const value = enabledValues.find((v) => v.id === selection.valueId);
     if (!value) {
       throw HttpError.badRequest(`That option isn't available for "${group.label}" on this product`);
+    }
+    // Colours must still be in the Colors library (the cache is warmed per request in app.ts).
+    if (group.type === "color" && !isLibraryHexSync(value.value)) {
+      throw HttpError.badRequest(`${value.label} is no longer available for "${group.label}" — please pick another colour`);
     }
     const priceAdjustment = Number(value.price_adjustment ?? 0);
     priceAdjustmentTotal += priceAdjustment;
@@ -582,8 +588,14 @@ export async function placeOrder(input: PlaceOrderInput) {
   }
   if (orderError || !order) throw HttpError.internal(orderError?.message ?? "Failed to create order");
 
+  // Frozen "what the customer saw" for the admin's work order. Best-effort and only ever
+  // present when the color preview feature is on — the key is omitted otherwise, so the
+  // insert is identical to the pre-feature one.
+  const previewSnapshots = await buildPreviewSnapshots(priced.lines);
+
   const { error: itemsError } = await supabaseAdmin.from("order_items").insert(
-    priced.lines.map((l) => ({
+    priced.lines.map((l, i) => ({
+      ...(previewSnapshots[i] ? { preview_snapshot: previewSnapshots[i] } : {}),
       order_id: order.id,
       product_id: l.productId,
       product_name_snapshot: l.name,
@@ -651,6 +663,7 @@ export async function placeOrder(input: PlaceOrderInput) {
         lineTotal: l.lineTotal,
         selectedColorName: l.selectedColorName,
         customText: l.customText,
+        customizations: l.customizations,
       })),
     });
 
@@ -786,7 +799,7 @@ interface NotifyOrderPlacedArgs {
   giftWrapCost: number;
   total: number;
   shippingAddress: any;
-  items: { name: string; quantity: number; unitPrice: number; lineTotal: number; selectedColorName?: string | null; customText?: string | null }[];
+  items: { name: string; quantity: number; unitPrice: number; lineTotal: number; selectedColorName?: string | null; customText?: string | null; customizations?: CustomizationSnapshot[] }[];
 }
 
 /** Fire-and-forget — invoice generation and email failures are logged internally and
@@ -806,7 +819,7 @@ function notifyOrderPlaced(args: NotifyOrderPlacedArgs) {
     items: args.items,
   };
 
-  background(sendAdminOrderNotification(payload).catch((err) =>
+  background(sendAdminOrderNotification({ ...payload, adminOrderUrl: `${env.FRONTEND_URL}/admin/orders/${args.orderId}` }).catch((err) =>
     logger.error({ err, orderNumber: args.orderNumber }, "Admin order notification failed")
   ));
 
@@ -914,7 +927,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
 
   const { data: items } = await supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, product_name_snapshot, unit_price_snapshot, line_total, selected_color_name, custom_text, products(track_inventory, allow_backorders, continue_selling_when_out_of_stock)")
+    .select("product_id, quantity, product_name_snapshot, unit_price_snapshot, line_total, selected_color_name, custom_text, customizations, products(track_inventory, allow_backorders, continue_selling_when_out_of_stock)")
     .eq("order_id", order.id);
 
   // The customer has already paid, so stock is reserved best-effort; a shortfall is logged
@@ -963,6 +976,7 @@ export async function markOrderPaidByRazorpayOrderId(razorpayOrderId: string, ra
       lineTotal: Number(i.line_total),
       selectedColorName: i.selected_color_name,
       customText: i.custom_text,
+      customizations: i.customizations ?? [],
     })),
   });
 

@@ -175,7 +175,7 @@ export async function loadPlacedOrders(since: string, until: string, opts: { ite
   ).then((rows) => rows.filter((o) => o.placed_at)); // `.not()` is a no-op in the test double
 }
 
-const isCollected = (o: any) => COLLECTED_STATUSES.includes(o.payment_status);
+export const isCollected = (o: any) => COLLECTED_STATUSES.includes(o.payment_status);
 const num = (v: unknown) => Number(v ?? 0);
 
 // ---------------------------------------------------------------- aggregations
@@ -232,7 +232,7 @@ function variantLabel(item: any): string {
   return [item.selected_color_name, ...opts].filter(Boolean).join(" / ") || "Standard";
 }
 
-function isCustomized(item: any) {
+export function isCustomized(item: any) {
   return Boolean(item.custom_text) || (Array.isArray(item.customizations) && item.customizations.length > 0);
 }
 
@@ -396,7 +396,7 @@ export function shippingBreakdown(orders: any[]) {
   };
 }
 
-const customerKey = (o: any) => o.customer_id ?? ((o.guest_email ?? o.shipping_address?.email) as string | undefined)?.toLowerCase() ?? null;
+export const customerKey = (o: any) => o.customer_id ?? ((o.guest_email ?? o.shipping_address?.email) as string | undefined)?.toLowerCase() ?? null;
 
 /**
  * Buyers in the period split into first-time and returning (a placed order before the period

@@ -9,6 +9,7 @@ import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { logAudit } from "../rbac/audit.service.js";
 import { PRODUCT_SELECT, toProductDTO } from "../catalog/serializers.js";
+import { normalizeHex, requireLibraryColors } from "../catalog/library-colors.js";
 import { imageUpload, uploadProductImage, deleteStorageObject, BUCKETS } from "../storage/upload.js";
 import { generateUniqueSlug, isSlugTaken } from "../../lib/slug.js";
 
@@ -640,11 +641,25 @@ adminProductsRouter.delete("/:id/customizations/:customizationId", requirePermis
 const customizationValueSchema = z.object({
   label: z.string().min(1),
   value: z.string().min(1),
+  /** Required for Color groups: the Colors library entry (label/value are taken from it). */
+  colorId: z.string().uuid().optional(),
   priceAdjustment: z.number().optional(),
   sortOrder: z.number().int().optional(),
   enabled: z.boolean().optional(),
   sku: z.string().optional().nullable(),
 });
+
+async function groupType(productId: string, customizationId: string): Promise<string> {
+  const { data, error } = await supabaseAdmin
+    .from("product_customizations")
+    .select("type")
+    .eq("id", customizationId)
+    .eq("product_id", productId)
+    .maybeSingle();
+  if (error) throw HttpError.internal(error.message);
+  if (!data) throw HttpError.notFound("Option group not found");
+  return data.type;
+}
 
 adminProductsRouter.post(
   "/:id/customizations/:customizationId/values",
@@ -653,6 +668,13 @@ adminProductsRouter.post(
   async (req, res, next) => {
     try {
       const b = req.body as z.infer<typeof customizationValueSchema>;
+      // Colour choices only ever come from the Colors library
+      if ((await groupType(req.params.id, req.params.customizationId)) === "color") {
+        if (!b.colorId) throw HttpError.badRequest("Pick a colour from your Colors library");
+        const [c] = await requireLibraryColors([b.colorId]);
+        b.label = c.name;
+        b.value = c.hex;
+      }
       if (b.sku) {
         const { data: existing } = await supabaseAdmin.from("customization_values").select("id").eq("sku", b.sku).maybeSingle();
         if (existing) throw HttpError.badRequest(`SKU "${b.sku}" is already in use by another option value`);
@@ -684,6 +706,13 @@ adminProductsRouter.patch(
       const patch: Record<string, unknown> = {};
       if (b.label !== undefined) patch.label = b.label;
       if (b.value !== undefined) patch.value = b.value;
+      // Changing which colour a Color value is must go through the library; price/active/order edits don't.
+      if ((b.colorId || b.value !== undefined || b.label !== undefined) && (await groupType(req.params.id, req.params.customizationId)) === "color") {
+        if (!b.colorId) throw HttpError.badRequest("Pick a colour from your Colors library");
+        const [c] = await requireLibraryColors([b.colorId]);
+        patch.label = c.name;
+        patch.value = c.hex;
+      }
       if (b.priceAdjustment !== undefined) patch.price_adjustment = b.priceAdjustment;
       if (b.sortOrder !== undefined) patch.sort_order = b.sortOrder;
       if (b.enabled !== undefined) patch.enabled = b.enabled;
@@ -706,6 +735,46 @@ adminProductsRouter.patch(
         .eq("id", req.params.valueId)
         .eq("customization_id", req.params.customizationId);
       if (error) throw HttpError.internal(error.message);
+      await respondWithFullProduct(res, req.params.id);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Adds several Colors-library colours to a Color group at once, skipping any already in it.
+adminProductsRouter.post(
+  "/:id/customizations/:customizationId/library-colors",
+  requirePermission("products.update"),
+  validate(z.object({ colorIds: z.array(z.string().uuid()).min(1).max(200), priceAdjustment: z.number().optional() })),
+  async (req, res, next) => {
+    try {
+      const { colorIds, priceAdjustment } = req.body as { colorIds: string[]; priceAdjustment?: number };
+      if ((await groupType(req.params.id, req.params.customizationId)) !== "color") {
+        throw HttpError.badRequest("Library colours can only be added to a Color option group");
+      }
+      const colors = await requireLibraryColors(colorIds);
+      const { data: existing, error: eErr } = await supabaseAdmin
+        .from("customization_values")
+        .select("value, sort_order")
+        .eq("customization_id", req.params.customizationId);
+      if (eErr) throw HttpError.internal(eErr.message);
+      const have = new Set((existing ?? []).map((v) => normalizeHex(v.value)));
+      let sort = Math.max(-1, ...(existing ?? []).map((v) => v.sort_order ?? 0));
+      const rows = colors
+        .filter((c) => !have.has(normalizeHex(c.hex)))
+        .map((c) => ({
+          customization_id: req.params.customizationId,
+          label: c.name,
+          value: c.hex,
+          price_adjustment: priceAdjustment ?? 0,
+          sort_order: ++sort,
+          enabled: true,
+        }));
+      if (rows.length > 0) {
+        const { error } = await supabaseAdmin.from("customization_values").insert(rows);
+        if (error) throw HttpError.internal(error.message);
+      }
       await respondWithFullProduct(res, req.params.id);
     } catch (err) {
       next(err);

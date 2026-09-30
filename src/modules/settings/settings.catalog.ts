@@ -73,6 +73,7 @@ export const SETTINGS: SettingDef[] = [
   def("storefront.reviews", "storefront", "Product Reviews", "boolean", true),
   def("storefront.ratings", "storefront", "Product Ratings", "boolean", true),
   def("storefront.comparison", "storefront", "Product Comparison", "boolean", false),
+  def("storefront.color_preview", "storefront", "Live Color Preview (Customize & Preview)", "boolean", false),
   def("storefront.show_stock_quantity", "storefront", "Show Stock Quantity", "boolean", false),
   def("storefront.show_sku", "storefront", "Show SKU", "boolean", false),
   def("storefront.show_weight", "storefront", "Show Product Weight", "boolean", false),
@@ -88,6 +89,23 @@ export const SETTINGS: SettingDef[] = [
   def("header.announcement_start_date", "header", "Announcement Start Date", "string", ""),
   def("header.announcement_end_date", "header", "Announcement End Date", "string", ""),
   def("header.announcement_sticky", "header", "Sticky Announcement", "boolean", false),
+
+  // ---- Pop-up alert (permission: settings.storefront) ----
+  // A message the admin can pop up on the storefront — a sale, a holiday notice, a coupon.
+  // Shown to a visitor per `frequency`, only on `pages`, between the optional dates.
+  def("popup.enabled", "popup", "Pop-up Enabled", "boolean", false),
+  def("popup.title", "popup", "Pop-up Title", "string", ""),
+  def("popup.message", "popup", "Pop-up Message", "text", ""),
+  def("popup.image_url", "popup", "Pop-up Image", "url", ""),
+  def("popup.button_label", "popup", "Button Label", "string", ""),
+  def("popup.button_link", "popup", "Button Link", "url", ""),
+  def("popup.coupon_code", "popup", "Coupon Code", "string", ""),
+  def("popup.style", "popup", "Pop-up Style", "select", "modal", { options: ["modal", "corner"] }),
+  def("popup.pages", "popup", "Show On", "select", "all", { options: ["all", "home", "shopping", "cart_checkout"] }),
+  def("popup.frequency", "popup", "How Often", "select", "session", { options: ["once", "session", "always"] }),
+  def("popup.delay_seconds", "popup", "Delay (seconds)", "number", 3),
+  def("popup.start_date", "popup", "Start Date", "string", ""),
+  def("popup.end_date", "popup", "End Date", "string", ""),
 
   // ---- Footer (permission: settings.storefront) ----
   def("footer.description", "footer", "Footer Description", "text", ""),
@@ -187,6 +205,17 @@ export const SETTINGS: SettingDef[] = [
   def("notify.failed_payment", "notifications", "Failed Payment Alert", "boolean", true, { isPublic: false }),
   def("notify.refund", "notifications", "Refund Alert", "boolean", true, { isPublic: false }),
 
+  // ---- Insights alerts (private) — thresholds for Admin → Insights → Alerts ----
+  def("insights.alert_revenue_drop_pct", "insights", "Alert when revenue drops by (%)", "number", 25, { isPublic: false }),
+  def("insights.alert_orders_drop_pct", "insights", "Alert when orders drop by (%)", "number", 25, { isPublic: false }),
+  def("insights.alert_conversion_drop_pct", "insights", "Alert when conversion rate drops by (%)", "number", 25, { isPublic: false }),
+  def("insights.alert_checkout_abandon_pct", "insights", "Alert when checkout abandonment is above (%)", "number", 80, { isPublic: false }),
+  def("insights.alert_refund_rate_pct", "insights", "Alert when refund rate is above (%)", "number", 10, { isPublic: false }),
+  def("insights.alert_no_orders_hours", "insights", "Alert when there are no orders for (hours)", "number", 48, { isPublic: false }),
+  def("insights.alert_payment_failure_pct", "insights", "Alert when failed online payments are above (%)", "number", 30, { isPublic: false }),
+  def("insights.alert_lcp_ms", "insights", "Alert when pages take longer than (ms) to show", "number", 4000, { isPublic: false }),
+  def("insights.alert_page_errors", "insights", "Alert when page errors exceed", "number", 20, { isPublic: false }),
+
   // ---- Email (permission: settings.email, private — no secrets, sender identity only) ----
   def("email.sender_name", "email", "Sender Name", "string", "Suthrayaa", { isPublic: false }),
   def("email.sender_email", "email", "Sender Email", "email", "", { isPublic: false }),
@@ -227,6 +256,7 @@ export const SENSITIVE_GROUP_PERMISSION: Record<string, string> = {
   branding: "settings.branding",
   storefront: "settings.storefront",
   header: "settings.storefront",
+  popup: "settings.storefront",
   footer: "settings.storefront",
   tax: "settings.tax",
   shipping: "settings.shipping",

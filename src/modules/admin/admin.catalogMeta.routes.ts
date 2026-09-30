@@ -9,6 +9,7 @@ import { validate } from "../../middleware/validate.js";
 import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { generateUniqueSlug, isSlugTaken } from "../../lib/slug.js";
+import { invalidateLibraryColors } from "../catalog/library-colors.js";
 
 // Categories, colors, testimonials, and hero slides are all simple, low-volume CRUD
 // resources with the same shape of admin needs — kept in one file rather than four
@@ -265,6 +266,10 @@ const colorSchema = z.object({
   hex: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
   sortOrder: z.number().int().optional(),
   isActive: z.boolean().optional(),
+  /** Colour family for filtering, e.g. "Red", "Green" (needs migration 0021). */
+  family: z.string().trim().max(40).optional().nullable(),
+  /** Yarn code / SKU (needs migration 0021). */
+  sku: z.string().trim().max(60).optional().nullable(),
 });
 
 adminColorsRouter.get("/", requirePermission("colors.view"), async (_req, res, next) => {
@@ -282,27 +287,56 @@ adminColorsRouter.post("/", requirePermission("colors.create"), validate(colorSc
     const b = req.body as z.infer<typeof colorSchema>;
     const { data, error } = await supabaseAdmin
       .from("colors")
-      .insert({ name: b.name, hex: b.hex, sort_order: b.sortOrder ?? 0, is_active: b.isActive ?? true })
+      .insert({ name: b.name, hex: b.hex, sort_order: b.sortOrder ?? 0, is_active: b.isActive ?? true, family: b.family || undefined, sku: b.sku || undefined })
       .select("*")
       .single();
     if (error) throw HttpError.internal(error.message);
+    invalidateLibraryColors();
     res.status(201).json(data);
   } catch (err) {
     next(err);
   }
 });
 
+/** Re-points Color option values that used `oldHex` at the library colour's new name/hex. */
+async function syncColorOptionValues(oldHex: string, name: string, hex: string) {
+  const { data: rows, error } = await supabaseAdmin
+    .from("customization_values")
+    .select("id, product_customizations!inner(type)")
+    .ilike("value", oldHex)
+    .eq("product_customizations.type", "color");
+  if (error) throw HttpError.internal(error.message);
+  const ids = (rows ?? []).map((r) => r.id);
+  if (ids.length === 0) return;
+  const { error: uErr } = await supabaseAdmin.from("customization_values").update({ label: name, value: hex }).in("id", ids);
+  if (uErr) throw HttpError.internal(uErr.message);
+}
+
 adminColorsRouter.patch("/:id", requirePermission("colors.update"), validate(colorSchema.partial()), async (req, res, next) => {
   try {
     const b = req.body as Partial<z.infer<typeof colorSchema>>;
+    const { data: before } = await supabaseAdmin.from("colors").select("name, hex").eq("id", req.params.id).maybeSingle();
     const { data, error } = await supabaseAdmin
       .from("colors")
-      .update({ name: b.name, hex: b.hex, sort_order: b.sortOrder, is_active: b.isActive })
+      .update({
+        name: b.name,
+        hex: b.hex,
+        sort_order: b.sortOrder,
+        is_active: b.isActive,
+        family: b.family === undefined ? undefined : b.family || null,
+        sku: b.sku === undefined ? undefined : b.sku || null,
+      })
       .eq("id", req.params.id)
       .select("*")
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Color not found");
+    // Product colour options point at library colours by hex — carry a rename/re-hex through
+    // to them so they stay linked instead of silently dropping off the storefront.
+    if (before && (before.hex !== data.hex || before.name !== data.name)) {
+      await syncColorOptionValues(before.hex, data.name, data.hex);
+    }
+    invalidateLibraryColors();
     res.json(data);
   } catch (err) {
     next(err);
@@ -313,6 +347,7 @@ adminColorsRouter.delete("/:id", requirePermission("colors.delete"), async (req,
   try {
     const { error } = await supabaseAdmin.from("colors").update({ is_active: false }).eq("id", req.params.id);
     if (error) throw HttpError.internal(error.message);
+    invalidateLibraryColors();
     res.status(204).end();
   } catch (err) {
     next(err);

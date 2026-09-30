@@ -3,6 +3,7 @@ import { supabaseAdmin } from "../../config/supabase.js";
 import { HttpError } from "../../lib/httpError.js";
 import { sanitizeSearchTerm } from "../../lib/sanitize.js";
 import { PRODUCT_SELECT, toProductDTO, toReviewDTO } from "./serializers.js";
+import { loadStorefrontPreview } from "../preview/preview.service.js";
 
 export const productsRouter = Router();
 
@@ -86,7 +87,10 @@ productsRouter.get("/:slug", async (req, res, next) => {
       .maybeSingle();
     if (error) throw HttpError.internal(error.message);
     if (!data) throw HttpError.notFound("Product not found");
-    res.json(toProductDTO(data));
+    // Optional live color preview — undefined (and so absent from the JSON) unless the
+    // admin has switched the feature on and configured this product.
+    const preview = await loadStorefrontPreview(data);
+    res.json(preview ? { ...toProductDTO(data), preview } : toProductDTO(data));
   } catch (err) {
     next(err);
   }

@@ -84,6 +84,30 @@ export async function uploadProductImage(bucket: string, folder: string, buffer:
   return { url: mainUrl.publicUrl, thumbnailUrl: thumbUrl.publicUrl, path: mainPath };
 }
 
+/** Every color-preview image (base photo + masks) is normalized to this width so a mask's
+ * pixels line up 1:1 with the base photo's in the browser. */
+export const PREVIEW_IMAGE_WIDTH = 1200;
+
+/**
+ * Stores a color-preview image: the base photo as high-quality webp, a mask as LOSSLESS
+ * webp (lossy compression would smear the part edges). Both are resized to exactly
+ * PREVIEW_IMAGE_WIDTH (enlarging if needed) so masks and base always align.
+ */
+export async function uploadPreviewImage(productId: string, kind: "base" | "mask", buffer: Buffer) {
+  const pipeline = sharp(buffer).rotate().resize({ width: PREVIEW_IMAGE_WIDTH });
+  const out = await (kind === "mask"
+    ? pipeline.flatten({ background: "#000000" }).grayscale().webp({ lossless: true })
+    : pipeline.webp({ quality: 90 })
+  ).toBuffer({ resolveWithObject: true });
+
+  const path = `${productId}/preview/${kind}-${randomUUID()}.webp`;
+  const bucket = supabaseAdmin.storage.from(BUCKETS.productImages);
+  const { error } = await bucket.upload(path, out.data, { contentType: "image/webp", upsert: false });
+  if (error) throw HttpError.internal(`Preview image upload failed: ${error.message}`);
+
+  return { url: bucket.getPublicUrl(path).data.publicUrl, width: out.info.width, height: out.info.height };
+}
+
 export async function deleteStorageObject(bucket: string, path: string) {
   await supabaseAdmin.storage.from(bucket).remove([path]);
 }
