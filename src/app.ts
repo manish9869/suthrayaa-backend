@@ -62,6 +62,7 @@ import { adminEmailTemplatesRouter, adminEmailLogsRouter } from "./modules/admin
 import { adminInvoiceSettingsRouter } from "./modules/admin/admin.settings.routes.js";
 import { adminSiteSettingsRouter } from "./modules/admin/admin.siteSettings.routes.js";
 import { analyticsRouter } from "./modules/analytics/analytics.routes.js";
+import { insightsRouter } from "./modules/analytics/insights/insights.routes.js";
 import { adminReturnsRouter } from "./modules/returns/admin.returns.routes.js";
 import {
   publicSettingsRouter,
@@ -171,6 +172,7 @@ export function createApp() {
   app.use("/api/admin/settings/invoice", adminInvoiceSettingsRouter);
   app.use("/api/admin/settings", adminSiteSettingsRouter);
   app.use("/api/admin/analytics", analyticsRouter);
+  app.use("/api/admin/insights", insightsRouter);
   app.use("/api/admin/returns", adminReturnsRouter);
   app.use("/api/admin/users", adminUsersRouter);
   app.use("/api/admin/roles", adminRolesRouter);
